@@ -1,0 +1,40 @@
+# Cursor IDE (local planning artifacts)
+.cursor/plans/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.env
+!.env.example
+
+# Local databases
+*.db
+
+# Node / frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Test / tooling caches
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Logs
+*.log
+npm-debug.log*
