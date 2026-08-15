@@ -1,0 +1,148 @@
+/* Compare view — matches reference: white canvas, icons only on changed nodes */
+
+.compare-page {
+  background: #ffffff;
+}
+
+.compare-toolbar {
+  background: #ffffff;
+  border-bottom: 1px solid #e8eaed;
+}
+
+.compare-panel {
+  background: #ffffff;
+  border: 1px solid #e8eaed;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.compare-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #f1f3f4;
+  background: #ffffff;
+}
+
+.compare-panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #202124;
+}
+
+.compare-panel-date {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #9aa0a6;
+}
+
+.compare-panel-count {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #f1f3f4;
+  font-size: 11px;
+  font-weight: 500;
+  color: #5f6368;
+}
+
+.compare-tree-body {
+  padding: 8px 12px 12px;
+  background: #ffffff;
+}
+
+.compare-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 1px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #ffffff;
+  cursor: default;
+}
+
+.compare-row--has-children {
+  cursor: pointer;
+}
+
+.compare-row--has-children:hover {
+  background: #fafafa;
+}
+
+.compare-node-icon {
+  flex-shrink: 0;
+  color: #9aa0a6;
+}
+
+.compare-node-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: #202124;
+}
+
+.compare-node-type {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #9aa0a6;
+}
+
+.compare-tree-line-v {
+  pointer-events: none;
+  position: absolute;
+  border-left: 1px solid #e8eaed;
+}
+
+.compare-tree-line-h {
+  pointer-events: none;
+  position: absolute;
+  border-top: 1px solid #e8eaed;
+}
+
+.compare-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 12px;
+  color: #5f6368;
+}
+
+.compare-tool-btn:hover {
+  background: #f8f9fa;
+}
+
+.compare-search {
+  height: 28px;
+  width: 160px;
+  padding: 0 10px 0 30px;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 12px;
+  color: #202124;
+  outline: none;
+}
+
+.compare-search:focus {
+  border-color: #1a73e8;
+}
+
+.compare-version-select {
+  height: 28px;
+  min-width: 80px;
+  padding: 0 8px;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 12px;
+}
