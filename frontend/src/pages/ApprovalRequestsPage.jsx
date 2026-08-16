@@ -1,16 +1,26 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { AlertTriangle, GitCompare } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import StatusBadge from '../components/StatusBadge';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
-import { approvalService } from '../services';
+import { approvalService, versionService } from '../services';
 
 export default function ApprovalRequestsPage() {
   const { showToast } = useToast();
   const { user } = useAuth();
   const [requests, setRequests] = useState([]);
+  const [conflictCounts, setConflictCounts] = useState({});
 
-  const load = () => approvalService.list().then((res) => setRequests(res.data));
+  const load = () => approvalService.list().then((res) => {
+    setRequests(res.data);
+    res.data.filter((r) => r.status === 'OPEN').forEach((r) => {
+      versionService.conflicts(r.hierarchy_version_id)
+        .then((cr) => setConflictCounts((prev) => ({ ...prev, [r.hierarchy_version_id]: cr.data.conflicts.length })))
+        .catch(() => {});
+    });
+  });
   useEffect(() => { load(); }, []);
 
   const act = async (requestId, stepId, action) => {
@@ -40,6 +50,24 @@ export default function ApprovalRequestsPage() {
               <StatusBadge status={req.status} />
             </div>
             <p className="mb-4 text-sm text-slate-600">{req.submission_comment}</p>
+            {req.hierarchy_id && (
+              <div className="mb-4 flex flex-wrap items-center gap-4">
+                <Link
+                  to={`/hierarchies/${req.hierarchy_id}/compare?b=${req.hierarchy_version_id}`}
+                  className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline"
+                >
+                  <GitCompare size={14} /> Review &amp; compare with active version
+                </Link>
+                {!!conflictCounts[req.hierarchy_version_id] && (
+                  <Link
+                    to={`/hierarchies/${req.hierarchy_id}/compare?b=${req.hierarchy_version_id}`}
+                    className="inline-flex items-center gap-1 text-sm font-medium text-amber-600 hover:underline"
+                  >
+                    <AlertTriangle size={14} /> {conflictCounts[req.hierarchy_version_id]} conflict(s) to resolve
+                  </Link>
+                )}
+              </div>
+            )}
             <div className="space-y-2">
               {req.steps.map((step) => {
                 const canAct = step.status === 'PENDING' && (user.username === step.approver_role_or_user || user.role === step.approver_role_or_user);

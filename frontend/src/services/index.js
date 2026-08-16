@@ -69,6 +69,8 @@ export const versionService = {
   deleteNode: (id, nodeId) => api.delete(`/versions/${id}/nodes/${nodeId}`),
   moveNode: (id, nodeId, data) => api.post(`/versions/${id}/nodes/${nodeId}/move`, data),
   cloneNode: (id, nodeId, data) => api.post(`/versions/${id}/nodes/${nodeId}/clone`, data),
+  conflicts: (id) => api.get(`/versions/${id}/conflicts`),
+  resolveConflicts: (id, resolutions) => api.post(`/versions/${id}/resolve-conflicts`, { resolutions }),
 };
 
 export const approvalService = {

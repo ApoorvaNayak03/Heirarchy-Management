@@ -25,10 +25,10 @@ class ComparisonService:
         if version_a.hierarchy_id != version_b.hierarchy_id:
             raise ValueError("Versions must belong to the same hierarchy")
 
-        nodes_a = ComparisonService._get_node_map(db, version_a_id)
-        nodes_b = ComparisonService._get_node_map(db, version_b_id)
-        parents_a = ComparisonService._get_parent_map(db, version_a_id)
-        parents_b = ComparisonService._get_parent_map(db, version_b_id)
+        nodes_a = ComparisonService.get_node_map(db, version_a_id)
+        nodes_b = ComparisonService.get_node_map(db, version_b_id)
+        parents_a = ComparisonService.get_parent_map_by_hierarchy_id(db, version_a_id)
+        parents_b = ComparisonService.get_parent_map_by_hierarchy_id(db, version_b_id)
 
         changes: list[CompareChangeItem] = []
         summary = CompareSummary()
@@ -47,11 +47,11 @@ class ComparisonService:
                 if na.display_name != nb.display_name:
                     changes.append(CompareChangeItem(change_type="Renamed", node=nb.display_name, old_value=na.display_name, new_value=nb.display_name, hierarchy_node_id=hn_id))
                     summary.renamed += 1
-                parent_a = parents_a.get(na.version_node_id)
-                parent_b = parents_b.get(nb.version_node_id)
-                if parent_a != parent_b:
-                    old_name = ComparisonService._parent_name(db, parent_a) if parent_a else "Root"
-                    new_name = ComparisonService._parent_name(db, parent_b) if parent_b else "Root"
+                parent_a_id = parents_a.get(hn_id)
+                parent_b_id = parents_b.get(hn_id)
+                if parent_a_id != parent_b_id:
+                    old_name = ComparisonService.parent_name_by_hierarchy_id(db, parent_a_id) if parent_a_id else "Root"
+                    new_name = ComparisonService.parent_name_by_hierarchy_id(db, parent_b_id) if parent_b_id else "Root"
                     changes.append(CompareChangeItem(change_type="Moved", node=nb.display_name, old_value=old_name, new_value=new_name, hierarchy_node_id=hn_id))
                     summary.moved += 1
                 props_a = na.properties or {}
@@ -77,7 +77,12 @@ class ComparisonService:
         return vn.display_name if vn else "-"
 
     @staticmethod
-    def _get_node_map(db: Session, version_id: str) -> dict[str, HierarchyVersionNode]:
+    def parent_name_by_hierarchy_id(db: Session, hierarchy_node_id: str) -> str:
+        hn = db.query(HierarchyVersionNode).filter(HierarchyVersionNode.hierarchy_node_id == hierarchy_node_id).first()
+        return hn.display_name if hn else "-"
+
+    @staticmethod
+    def get_node_map(db: Session, version_id: str) -> dict[str, HierarchyVersionNode]:
         nodes = (
             db.query(HierarchyVersionNode)
             .filter(
@@ -92,6 +97,22 @@ class ComparisonService:
     def _get_parent_map(db: Session, version_id: str) -> dict[str, str | None]:
         edges = db.query(HierarchyEdge).filter(HierarchyEdge.hierarchy_version_id == version_id).all()
         return {e.child_version_node_id: e.parent_version_node_id for e in edges}
+
+    @staticmethod
+    def get_parent_map_by_hierarchy_id(db: Session, version_id: str) -> dict[str, str | None]:
+        """Map hierarchy_node_id to parent hierarchy_node_id for stable comparison across versions."""
+        edges = db.query(HierarchyEdge).filter(HierarchyEdge.hierarchy_version_id == version_id).all()
+        parent_hierarchy_map = {}
+        for edge in edges:
+            child_node = db.query(HierarchyVersionNode).filter(
+                HierarchyVersionNode.version_node_id == edge.child_version_node_id
+            ).first()
+            parent_node = db.query(HierarchyVersionNode).filter(
+                HierarchyVersionNode.version_node_id == edge.parent_version_node_id
+            ).first()
+            if child_node:
+                parent_hierarchy_map[child_node.hierarchy_node_id] = parent_node.hierarchy_node_id if parent_node else None
+        return parent_hierarchy_map
 
 
 class LineageService:

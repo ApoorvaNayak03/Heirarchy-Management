@@ -10,6 +10,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import CompareTreePanel from '../components/compare/CompareTreePanel';
+import DiffPanel from '../components/compare/DiffPanel';
 import '../components/compare/compare.css';
 import Button from '../components/ui/Button';
 import { useToast } from '../hooks/useToast';
@@ -34,10 +35,21 @@ export default function CompareVersionsPage() {
   const [fullscreen, setFullscreen] = useState(false);
   const [collapsedA, setCollapsedA] = useState(false);
   const [collapsedB, setCollapsedB] = useState(false);
+  const [compareResult, setCompareResult] = useState(null);
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [conflicts, setConflicts] = useState([]);
+  const [conflictsLoading, setConflictsLoading] = useState(false);
+  const [resolvingConflicts, setResolvingConflicts] = useState(false);
 
   const versions = detail?.versions || [];
   const versionA = versions.find((v) => v.hierarchy_version_id === versionAId);
   const versionB = versions.find((v) => v.hierarchy_version_id === versionBId);
+
+  const proposedVersionId = useMemo(() => {
+    if (versionA?.status === 'ACTIVE' && versionB?.status !== 'ACTIVE') return versionBId;
+    if (versionB?.status === 'ACTIVE' && versionA?.status !== 'ACTIVE') return versionAId;
+    return null;
+  }, [versionA, versionB, versionAId, versionBId]);
 
   const displayA = useMemo(() => filterTree(treeA, search), [treeA, search]);
   const displayB = useMemo(() => filterTree(treeB, search), [treeB, search]);
@@ -83,6 +95,17 @@ export default function CompareVersionsPage() {
       ]);
       setTreeA(treeARes.data);
       setTreeB(treeBRes.data);
+
+      // Fetch comparison result
+      setCompareLoading(true);
+      try {
+        const compareRes = await versionService.compare(versionAId, versionBId);
+        setCompareResult(compareRes.data);
+      } catch (err) {
+        console.error('Failed to load comparison', err);
+      } finally {
+        setCompareLoading(false);
+      }
     } catch (err) {
       showToast(err.response?.data?.detail || 'Failed to load trees', 'error');
     }
@@ -91,6 +114,34 @@ export default function CompareVersionsPage() {
   useEffect(() => {
     if (versionAId && versionBId && versionAId !== versionBId) loadTrees();
   }, [versionAId, versionBId, loadTrees]);
+
+  const loadConflicts = useCallback(() => {
+    if (!proposedVersionId) {
+      setConflicts([]);
+      return;
+    }
+    setConflictsLoading(true);
+    versionService.conflicts(proposedVersionId)
+      .then((res) => setConflicts(res.data.conflicts))
+      .catch(() => setConflicts([]))
+      .finally(() => setConflictsLoading(false));
+  }, [proposedVersionId]);
+
+  useEffect(() => { loadConflicts(); }, [loadConflicts]);
+
+  const handleResolveConflicts = async (resolutions) => {
+    setResolvingConflicts(true);
+    try {
+      await versionService.resolveConflicts(proposedVersionId, resolutions);
+      showToast('Conflicts resolved', 'success');
+      loadConflicts();
+      loadTrees();
+    } catch (err) {
+      showToast(err.response?.data?.detail || 'Failed to resolve conflicts', 'error');
+    } finally {
+      setResolvingConflicts(false);
+    }
+  };
 
   useEffect(() => {
     const onKey = (e) => {
@@ -171,7 +222,7 @@ export default function CompareVersionsPage() {
         </div>
       </div>
 
-      <div className="grid flex-1 grid-cols-1 gap-4 overflow-hidden p-4 lg:grid-cols-2">
+      <div className="grid flex-1 grid-cols-1 gap-4 overflow-hidden p-4 lg:grid-cols-3">
         <CompareTreePanel
           version={versionA}
           tree={displayA}
@@ -179,6 +230,7 @@ export default function CompareVersionsPage() {
           collapsed={collapsedA}
           onToggleCollapse={() => setCollapsedA(!collapsedA)}
           nodeCount={countNodes(treeA)}
+          changes={compareResult?.changes}
         />
         <CompareTreePanel
           version={versionB}
@@ -187,7 +239,18 @@ export default function CompareVersionsPage() {
           collapsed={collapsedB}
           onToggleCollapse={() => setCollapsedB(!collapsedB)}
           nodeCount={countNodes(treeB)}
+          changes={compareResult?.changes}
         />
+        <div className="overflow-hidden rounded border border-gray-200 bg-white">
+          <DiffPanel
+            compareResult={compareResult}
+            loading={compareLoading}
+            conflicts={conflicts}
+            conflictsLoading={conflictsLoading}
+            onResolveConflicts={handleResolveConflicts}
+            resolvingConflicts={resolvingConflicts}
+          />
+        </div>
       </div>
     </div>
   );

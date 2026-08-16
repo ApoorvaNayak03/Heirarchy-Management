@@ -16,12 +16,14 @@ from app.schemas.schemas import (
     ApprovalRequestResponse,
     ApprovalStepResponse,
     CompareResult,
+    ConflictsResponse,
     CopySubtreeRequest,
     MessageResponse,
     NodeCloneRequest,
     NodeCreate,
     NodeMoveRequest,
     NodeUpdate,
+    ResolveConflictsRequest,
     SubmitApprovalRequest,
     TreeNodeResponse,
     ValidationResult,
@@ -31,7 +33,7 @@ from app.schemas.schemas import (
 )
 from app.services.governance_service import ComparisonService
 from app.services.node_service import NodeService
-from app.services.version_service import ActivationService, ApprovalService, VersionService
+from app.services.version_service import ActivationService, ApprovalService, ConflictService, VersionService
 from app.validators.validation_service import ValidationService
 
 router = APIRouter(tags=["Versions"])
@@ -151,6 +153,16 @@ def compare_versions(version_id: str, other_version_id: str, db: Session = Depen
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/api/versions/{version_id}/conflicts", response_model=ConflictsResponse)
+def get_conflicts(version_id: str, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    return ConflictService.get_conflicts(db, version_id)
+
+
+@router.post("/api/versions/{version_id}/resolve-conflicts", response_model=VersionResponse)
+def resolve_conflicts(version_id: str, payload: ResolveConflictsRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return ConflictService.resolve_conflicts(db, version_id, payload, user)
+
+
 @router.get("/api/approval-requests", response_model=list[ApprovalRequestResponse])
 def list_approval_requests(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     requests = db.query(ApprovalRequest).options(joinedload(ApprovalRequest.steps), joinedload(ApprovalRequest.hierarchy_version)).order_by(ApprovalRequest.submitted_at.desc()).all()
@@ -169,6 +181,7 @@ def list_approval_requests(db: Session = Depends(get_db), _: User = Depends(get_
                 steps=[ApprovalStepResponse.model_validate(s) for s in req.steps],
                 version_no=version.version_no if version else None,
                 hierarchy_name=hierarchy.name if hierarchy else None,
+                hierarchy_id=hierarchy.hierarchy_id if hierarchy else None,
             )
         )
     return result

@@ -325,10 +325,37 @@ class ApprovalRequestResponse(BaseModel):
     steps: list[ApprovalStepResponse] = []
     version_no: str | None = None
     hierarchy_name: str | None = None
+    hierarchy_id: str | None = None
 
 
 class ApprovalActionRequest(BaseModel):
     comment: str | None = None
+
+
+class ConflictItem(BaseModel):
+    hierarchy_node_id: str
+    node_name: str
+    field: str
+    base_value: str | None
+    active_value: str | None
+    proposed_value: str | None
+
+
+class ConflictsResponse(BaseModel):
+    has_conflicts: bool
+    active_version_id: str | None = None
+    base_version_id: str | None = None
+    conflicts: list[ConflictItem] = []
+
+
+class ConflictResolution(BaseModel):
+    hierarchy_node_id: str
+    field: str
+    choice: str
+
+
+class ResolveConflictsRequest(BaseModel):
+    resolutions: list[ConflictResolution]
 
 
 class ActivateVersionRequest(BaseModel):

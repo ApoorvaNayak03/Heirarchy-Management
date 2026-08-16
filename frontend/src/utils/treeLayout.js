@@ -24,6 +24,8 @@ function walkTree(nodeList, depth, startX, nodes, edges, options) {
         nodeType: node.node_type_name,
         isDraft: !!node.isDraft,
         isDropTarget: options.dropTargetId === node.version_node_id,
+        isDraggingNode: options.draggingNodeId === node.version_node_id,
+        isFocused: options.focusedId === node.version_node_id,
         node,
         selectedId: options.selectedId,
         readOnly: options.readOnly,
@@ -32,6 +34,7 @@ function walkTree(nodeList, depth, startX, nodes, edges, options) {
         onEdit: options.onEdit,
         onDelete: options.onDelete,
         onClone: options.onClone,
+        onFocus: options.onFocus,
       },
     });
 

@@ -37,6 +37,11 @@ export function isDescendant(tree, ancestorId, candidateId) {
   return walk(ancestor.children);
 }
 
+export function subtreeFrom(tree, id) {
+  const node = findNode(tree, id);
+  return node ? [node] : [];
+}
+
 export function countNodes(tree) {
   return (tree || []).reduce((sum, node) => sum + 1 + countNodes(node.children), 0);
 }

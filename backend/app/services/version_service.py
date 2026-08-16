@@ -21,11 +21,15 @@ from app.models import (
 from app.schemas.schemas import (
     ActivateVersionRequest,
     ApprovalActionRequest,
+    ConflictItem,
+    ConflictsResponse,
+    ResolveConflictsRequest,
     SubmitApprovalRequest,
     VersionCreate,
     VersionUpdate,
 )
 from app.services.audit_service import AuditService
+from app.services.governance_service import ComparisonService
 from app.utils.enums import (
     ApprovalRequestStatus,
     ApprovalStepStatus,
@@ -412,3 +416,212 @@ class ActivationService:
         db.commit()
         db.refresh(version)
         return version
+
+
+class ConflictService:
+    """Detects and resolves 3-way conflicts between a proposed version, the version it
+    was branched from, and the hierarchy's currently ACTIVE version."""
+
+    @staticmethod
+    def _active_version(db: Session, proposed: HierarchyVersion) -> HierarchyVersion | None:
+        return (
+            db.query(HierarchyVersion)
+            .filter(
+                HierarchyVersion.hierarchy_id == proposed.hierarchy_id,
+                HierarchyVersion.status == VersionStatus.ACTIVE.value,
+                HierarchyVersion.hierarchy_version_id != proposed.hierarchy_version_id,
+            )
+            .first()
+        )
+
+    @staticmethod
+    def get_conflicts(db: Session, version_id: str) -> ConflictsResponse:
+        proposed = VersionService.get_version(db, version_id)
+        base_id = proposed.based_on_version_id
+        active = ConflictService._active_version(db, proposed)
+
+        if not base_id or not active:
+            return ConflictsResponse(
+                has_conflicts=False,
+                active_version_id=active.hierarchy_version_id if active else None,
+                base_version_id=base_id,
+                conflicts=[],
+            )
+
+        base_nodes = ComparisonService.get_node_map(db, base_id)
+        active_nodes = ComparisonService.get_node_map(db, active.hierarchy_version_id)
+        proposed_nodes = ComparisonService.get_node_map(db, version_id)
+        base_parents = ComparisonService.get_parent_map_by_hierarchy_id(db, base_id)
+        active_parents = ComparisonService.get_parent_map_by_hierarchy_id(db, active.hierarchy_version_id)
+        proposed_parents = ComparisonService.get_parent_map_by_hierarchy_id(db, version_id)
+
+        conflicts: list[ConflictItem] = []
+        common_ids = set(base_nodes) & set(active_nodes) & set(proposed_nodes)
+        for hn_id in common_ids:
+            base_node, active_node, proposed_node = base_nodes[hn_id], active_nodes[hn_id], proposed_nodes[hn_id]
+
+            if (
+                base_node.display_name != active_node.display_name
+                and base_node.display_name != proposed_node.display_name
+                and active_node.display_name != proposed_node.display_name
+            ):
+                conflicts.append(
+                    ConflictItem(
+                        hierarchy_node_id=hn_id,
+                        node_name=proposed_node.display_name,
+                        field="display_name",
+                        base_value=base_node.display_name,
+                        active_value=active_node.display_name,
+                        proposed_value=proposed_node.display_name,
+                    )
+                )
+
+            base_parent_id, active_parent_id, proposed_parent_id = (
+                base_parents.get(hn_id),
+                active_parents.get(hn_id),
+                proposed_parents.get(hn_id),
+            )
+            if (
+                base_parent_id != active_parent_id
+                and base_parent_id != proposed_parent_id
+                and active_parent_id != proposed_parent_id
+            ):
+                conflicts.append(
+                    ConflictItem(
+                        hierarchy_node_id=hn_id,
+                        node_name=proposed_node.display_name,
+                        field="parent",
+                        base_value=ComparisonService.parent_name_by_hierarchy_id(db, base_parent_id) if base_parent_id else "Root",
+                        active_value=ComparisonService.parent_name_by_hierarchy_id(db, active_parent_id) if active_parent_id else "Root",
+                        proposed_value=ComparisonService.parent_name_by_hierarchy_id(db, proposed_parent_id) if proposed_parent_id else "Root",
+                    )
+                )
+
+            base_props = base_node.properties or {}
+            active_props = active_node.properties or {}
+            proposed_props = proposed_node.properties or {}
+            for key in set(base_props) | set(active_props) | set(proposed_props):
+                base_value, active_value, proposed_value = base_props.get(key), active_props.get(key), proposed_props.get(key)
+                if base_value != active_value and base_value != proposed_value and active_value != proposed_value:
+                    conflicts.append(
+                        ConflictItem(
+                            hierarchy_node_id=hn_id,
+                            node_name=proposed_node.display_name,
+                            field=f"property:{key}",
+                            base_value=str(base_value) if base_value is not None else None,
+                            active_value=str(active_value) if active_value is not None else None,
+                            proposed_value=str(proposed_value) if proposed_value is not None else None,
+                        )
+                    )
+
+        return ConflictsResponse(
+            has_conflicts=bool(conflicts),
+            active_version_id=active.hierarchy_version_id,
+            base_version_id=base_id,
+            conflicts=conflicts,
+        )
+
+    @staticmethod
+    def resolve_conflicts(db: Session, version_id: str, payload: ResolveConflictsRequest, user: User) -> HierarchyVersion:
+        proposed = VersionService.get_version(db, version_id)
+        if proposed.status not in {VersionStatus.DRAFT.value, VersionStatus.PENDING_APPROVAL.value}:
+            raise HTTPException(status_code=409, detail="Version is not open for conflict resolution")
+
+        active = ConflictService._active_version(db, proposed)
+        if not active:
+            raise HTTPException(status_code=409, detail="No active version to resolve conflicts against")
+
+        proposed_nodes = {
+            n.hierarchy_node_id: n
+            for n in db.query(HierarchyVersionNode).filter(
+                HierarchyVersionNode.hierarchy_version_id == version_id,
+                HierarchyVersionNode.node_status == NodeStatus.ACTIVE.value,
+            )
+        }
+        active_nodes = {
+            n.hierarchy_node_id: n
+            for n in db.query(HierarchyVersionNode).filter(
+                HierarchyVersionNode.hierarchy_version_id == active.hierarchy_version_id,
+                HierarchyVersionNode.node_status == NodeStatus.ACTIVE.value,
+            )
+        }
+        active_parents = ComparisonService.get_parent_map_by_hierarchy_id(db, active.hierarchy_version_id)
+
+        for resolution in payload.resolutions:
+            if resolution.choice != "active":
+                continue
+            target_node = proposed_nodes.get(resolution.hierarchy_node_id)
+            source_node = active_nodes.get(resolution.hierarchy_node_id)
+            if not target_node or not source_node:
+                continue
+
+            if resolution.field == "display_name":
+                old_value = target_node.display_name
+                target_node.display_name = source_node.display_name
+                AuditService.log_change(
+                    db,
+                    hierarchy_id=proposed.hierarchy_id,
+                    hierarchy_version_id=version_id,
+                    entity_type=ChangeEntityType.VERSION_NODE,
+                    entity_id=target_node.version_node_id,
+                    action=ChangeAction.UPDATE,
+                    changed_by=user.username,
+                    field_name="conflict_resolution:display_name",
+                    old_value=old_value,
+                    new_value=target_node.display_name,
+                )
+
+            elif resolution.field == "parent":
+                new_parent_hn_id = active_parents.get(resolution.hierarchy_node_id)
+                new_parent_version_node_id = (
+                    proposed_nodes[new_parent_hn_id].version_node_id
+                    if new_parent_hn_id and new_parent_hn_id in proposed_nodes
+                    else None
+                )
+                edge = (
+                    db.query(HierarchyEdge)
+                    .filter(
+                        HierarchyEdge.hierarchy_version_id == version_id,
+                        HierarchyEdge.child_version_node_id == target_node.version_node_id,
+                    )
+                    .first()
+                )
+                if edge:
+                    old_parent = edge.parent_version_node_id
+                    edge.parent_version_node_id = new_parent_version_node_id
+                    AuditService.log_change(
+                        db,
+                        hierarchy_id=proposed.hierarchy_id,
+                        hierarchy_version_id=version_id,
+                        entity_type=ChangeEntityType.EDGE,
+                        entity_id=edge.edge_id,
+                        action=ChangeAction.UPDATE,
+                        changed_by=user.username,
+                        field_name="conflict_resolution:parent",
+                        old_value=old_parent,
+                        new_value=new_parent_version_node_id,
+                    )
+
+            elif resolution.field.startswith("property:"):
+                key = resolution.field.split(":", 1)[1]
+                props = dict(target_node.properties or {})
+                old_value = props.get(key)
+                new_value = (source_node.properties or {}).get(key)
+                props[key] = new_value
+                target_node.properties = props
+                AuditService.log_change(
+                    db,
+                    hierarchy_id=proposed.hierarchy_id,
+                    hierarchy_version_id=version_id,
+                    entity_type=ChangeEntityType.PROPERTY,
+                    entity_id=target_node.version_node_id,
+                    action=ChangeAction.UPDATE,
+                    changed_by=user.username,
+                    field_name=f"conflict_resolution:{resolution.field}",
+                    old_value=str(old_value) if old_value is not None else None,
+                    new_value=str(new_value) if new_value is not None else None,
+                )
+
+        db.commit()
+        db.refresh(proposed)
+        return proposed

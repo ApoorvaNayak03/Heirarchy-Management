@@ -1,10 +1,27 @@
-import { ChevronDown, Circle, Folder } from 'lucide-react';
+import { ChevronDown, Circle, Folder, Plus, Minus, Edit3, Move } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import './compare.css';
 
-function CompareTreeNode({ node, level, allExpanded, isLast }) {
+const changeTypeIcons = {
+  Added: <Plus size={12} className="text-green-600" />,
+  Removed: <Minus size={12} className="text-red-600" />,
+  Renamed: <Edit3 size={12} className="text-blue-600" />,
+  Moved: <Move size={12} className="text-purple-600" />,
+  Property: <Edit3 size={12} className="text-orange-600" />,
+};
+
+const changeTypeBg = {
+  Added: 'bg-green-50 border-l-4 border-l-green-500',
+  Removed: 'bg-red-50 border-l-4 border-l-red-500',
+  Renamed: 'bg-blue-50 border-l-4 border-l-blue-500',
+  Moved: 'bg-purple-50 border-l-4 border-l-purple-500',
+  Property: 'bg-orange-50 border-l-4 border-l-orange-500',
+};
+
+function CompareTreeNode({ node, level, allExpanded, isLast, changes }) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = node.children?.length > 0;
+  const nodeChanges = changes?.[node.hierarchy_node_id] || [];
 
   useEffect(() => {
     setExpanded(allExpanded);
@@ -26,7 +43,7 @@ function CompareTreeNode({ node, level, allExpanded, isLast }) {
       )}
 
       <div
-        className={`compare-row ${hasChildren ? 'compare-row--has-children' : ''}`}
+        className={`compare-row ${hasChildren ? 'compare-row--has-children' : ''} ${nodeChanges.length > 0 ? changeTypeBg[nodeChanges[0].change_type] : ''}`}
         style={{ marginLeft: `${level * 20}px` }}
         onClick={hasChildren ? () => setExpanded(!expanded) : undefined}
         onKeyDown={hasChildren ? (e) => e.key === 'Enter' && setExpanded(!expanded) : undefined}
@@ -41,6 +58,43 @@ function CompareTreeNode({ node, level, allExpanded, isLast }) {
 
         <span className="compare-node-name">{node.display_name}</span>
         <span className="compare-node-type">{node.node_type_name}</span>
+
+        {nodeChanges.length > 0 && (
+          <div className="ml-auto flex items-center gap-1.5 pr-2">
+            {nodeChanges.map((change, idx) => (
+              <span
+                key={idx}
+                className="flex items-center gap-1 rounded px-2 py-0.5 text-xs font-semibold"
+                title={`${change.change_type}: ${change.old_value || ''} → ${change.new_value || ''}`}
+                style={{
+                  backgroundColor:
+                    change.change_type === 'Added'
+                      ? '#dcfce7'
+                      : change.change_type === 'Removed'
+                        ? '#fee2e2'
+                        : change.change_type === 'Renamed'
+                          ? '#dbeafe'
+                          : change.change_type === 'Moved'
+                            ? '#f3e8ff'
+                            : '#fed7aa',
+                  color:
+                    change.change_type === 'Added'
+                      ? '#166534'
+                      : change.change_type === 'Removed'
+                        ? '#991b1b'
+                        : change.change_type === 'Renamed'
+                          ? '#0c4a6e'
+                          : change.change_type === 'Moved'
+                            ? '#581c87'
+                            : '#b45309',
+                }}
+              >
+                {changeTypeIcons[change.change_type]}
+                {change.change_type}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {expanded && hasChildren && node.children.map((child, idx, arr) => (
@@ -50,6 +104,7 @@ function CompareTreeNode({ node, level, allExpanded, isLast }) {
           level={level + 1}
           allExpanded={allExpanded}
           isLast={idx === arr.length - 1}
+          changes={changes}
         />
       ))}
     </div>
@@ -63,7 +118,11 @@ export default function CompareTreePanel({
   collapsed,
   onToggleCollapse,
   nodeCount,
+  changes,
 }) {
+  const changesByNodeId = changes ? Object.fromEntries(
+    changes.map(c => [c.hierarchy_node_id, [...(changes.filter(x => x.hierarchy_node_id === c.hierarchy_node_id))]]).filter((v, i, a) => a.findIndex(t => t[0] === v[0]) === i)
+  ) : {};
   const title = version?.version_no || '—';
   const date = version?.valid_from || version?.created_at;
 
@@ -96,6 +155,7 @@ export default function CompareTreePanel({
                 level={0}
                 allExpanded={allExpanded}
                 isLast={idx === arr.length - 1}
+                changes={changesByNodeId}
               />
             ))
           )}

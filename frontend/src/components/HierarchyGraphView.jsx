@@ -5,14 +5,18 @@ import ReactFlow, {
   MiniMap,
   ReactFlowProvider,
   useReactFlow,
+  useNodesState,
+  useEdgesState,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
+import { Scan, X } from 'lucide-react';
 import HierarchyGraphNode from './HierarchyGraphNode';
 import { NODE_HEIGHT, NODE_WIDTH, treeToFlowElements } from '../utils/treeLayout';
-import { isDescendant } from '../utils/treeUtils';
+import { findNode, isDescendant, subtreeFrom } from '../utils/treeUtils';
 
 const nodeTypes = { hierarchyNode: HierarchyGraphNode };
 
+// Generous hit-testing box so a drop target lights up before the cursor is exactly centered on it.
 function findDropTarget(nodes, draggedId, position) {
   const cx = position.x + NODE_WIDTH / 2;
   const cy = position.y + NODE_HEIGHT / 2;
@@ -24,8 +28,8 @@ function findDropTarget(nodes, draggedId, position) {
     if (n.id === draggedId) continue;
     const nx = n.position.x + NODE_WIDTH / 2;
     const ny = n.position.y + NODE_HEIGHT / 2;
-    const withinX = cx >= n.position.x - 20 && cx <= n.position.x + NODE_WIDTH + 20;
-    const withinY = cy >= n.position.y - 10 && cy <= n.position.y + NODE_HEIGHT + 40;
+    const withinX = cx >= n.position.x - 40 && cx <= n.position.x + NODE_WIDTH + 40;
+    const withinY = cy >= n.position.y - 30 && cy <= n.position.y + NODE_HEIGHT + 70;
     if (!withinX || !withinY) continue;
     const dist = Math.hypot(cx - nx, cy - ny);
     if (dist < bestDist) {
@@ -40,7 +44,6 @@ function GraphCanvas({
   tree,
   selectedId,
   readOnly,
-  dropTargetId,
   onSelect,
   onAdd,
   onEdit,
@@ -48,58 +51,114 @@ function GraphCanvas({
   onClone,
   onMove,
 }) {
-  const { fitView, getNodes } = useReactFlow();
+  const { fitView } = useReactFlow();
   const draggingRef = useRef(null);
-  const [localDropTarget, setLocalDropTarget] = useState(null);
-  const [resetToken, setResetToken] = useState(0);
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges] = useEdgesState([]);
+  const [dropTarget, setDropTarget] = useState(null); // { id, valid }
+  const [draggingNodeId, setDraggingNodeId] = useState(null);
+  const [focusedId, setFocusedId] = useState(null);
 
-  const { nodes, edges } = useMemo(
-    () => treeToFlowElements(tree, {
-      selectedId,
-      readOnly,
-      dropTargetId: localDropTarget || dropTargetId,
-      onSelect,
-      onAdd,
-      onEdit,
-      onDelete,
-      onClone,
-    }),
-    [tree, selectedId, readOnly, localDropTarget, dropTargetId, onSelect, onAdd, onEdit, onDelete, onClone, resetToken],
+  const onFocus = useCallback((node) => {
+    setFocusedId((prev) => (prev === node.version_node_id ? null : node.version_node_id));
+  }, []);
+
+  // If the focused node disappears from the tree (deleted, undone, etc.) drop back to full view.
+  useEffect(() => {
+    if (focusedId && !findNode(tree, focusedId)) {
+      setFocusedId(null);
+    }
+  }, [tree, focusedId]);
+
+  const focusedNode = focusedId ? findNode(tree, focusedId) : null;
+  const displayTree = useMemo(
+    () => (focusedNode ? subtreeFrom(tree, focusedId) : tree),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tree, focusedId],
   );
 
+  const callbacksRef = useRef({});
+  callbacksRef.current = { selectedId, readOnly, onSelect, onAdd, onEdit, onDelete, onClone, onFocus, focusedId };
+
+  const buildLayout = useCallback(() => {
+    const { selectedId: sel, readOnly: ro, onSelect: os, onAdd: oa, onEdit: oe, onDelete: od, onClone: oc, onFocus: of_, focusedId: fid } = callbacksRef.current;
+    return treeToFlowElements(displayTree, { selectedId: sel, readOnly: ro, onSelect: os, onAdd: oa, onEdit: oe, onDelete: od, onClone: oc, onFocus: of_, focusedId: fid });
+  }, [displayTree]);
+
+  // Rebuild positions/edges only when the underlying tree structure actually changes.
+  // Drag/hover state is applied separately below, WITHOUT touching node positions,
+  // so React Flow's own drag tracking is never fought over mid-drag.
   useEffect(() => {
-    if (nodes.length) {
-      const timer = setTimeout(() => fitView({ padding: 0.2, duration: 300 }), 50);
-      return () => clearTimeout(timer);
-    }
-  }, [nodes.length, edges.length, fitView]);
+    const { nodes: newNodes, edges: newEdges } = buildLayout();
+    setNodes(newNodes);
+    setEdges(newEdges);
+    const timer = setTimeout(() => fitView({ padding: 0.2, duration: 300 }), 50);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayTree]);
+
+  // Push interaction flags (selection, drop target, dragging) onto existing node data
+  // without ever overwriting `position`.
+  useEffect(() => {
+    setNodes((nds) => nds.map((n) => {
+      const isDraggingNode = draggingNodeId === n.id;
+      const isDropTarget = dropTarget?.id === n.id && dropTarget.valid;
+      const isInvalidDropTarget = dropTarget?.id === n.id && !dropTarget.valid;
+      return {
+        ...n,
+        zIndex: isDraggingNode ? 1000 : (isDropTarget || isInvalidDropTarget) ? 500 : 0,
+        data: {
+          ...n.data,
+          selectedId,
+          readOnly,
+          isDropTarget,
+          isInvalidDropTarget,
+          isDraggingNode,
+          isFocused: focusedId === n.id,
+          onSelect,
+          onAdd,
+          onEdit,
+          onDelete,
+          onClone,
+          onFocus,
+        },
+      };
+    }));
+  }, [selectedId, readOnly, dropTarget, draggingNodeId, focusedId, onSelect, onAdd, onEdit, onDelete, onClone, onFocus, setNodes]);
 
   const onNodeDragStart = useCallback((_, node) => {
     draggingRef.current = node.id;
+    setDraggingNodeId(node.id);
   }, []);
 
   const onNodeDrag = useCallback((_, node) => {
-    const currentNodes = getNodes();
-    const target = findDropTarget(currentNodes, node.id, node.position);
-    setLocalDropTarget(target);
-  }, [getNodes]);
+    const targetId = findDropTarget(nodes, node.id, node.position);
+    if (!targetId) {
+      setDropTarget(null);
+      return;
+    }
+    const valid = targetId !== node.id && !isDescendant(tree, node.id, targetId);
+    setDropTarget((prev) => (prev?.id === targetId && prev?.valid === valid ? prev : { id: targetId, valid }));
+  }, [nodes, tree]);
 
   const onNodeDragStop = useCallback((_, node) => {
     const draggedId = draggingRef.current;
     draggingRef.current = null;
-    setLocalDropTarget(null);
+    setDraggingNodeId(null);
+    setDropTarget(null);
 
-    if (readOnly || !draggedId || !onMove) return;
+    const targetId = findDropTarget(nodes, draggedId, node.position);
+    const valid = targetId && targetId !== draggedId && !isDescendant(tree, draggedId, targetId);
 
-    const currentNodes = getNodes();
-    const targetId = findDropTarget(currentNodes, draggedId, node.position);
-
-    if (targetId && targetId !== draggedId && !isDescendant(tree, draggedId, targetId)) {
+    if (!readOnly && draggedId && onMove && valid) {
       onMove(draggedId, targetId, null);
-    } else {
-      setResetToken((t) => t + 1);
+      return;
     }
-  }, [readOnly, onMove, tree, getNodes]);
+
+    // Invalid or no target: snap back to the last known-good layout.
+    const { nodes: freshNodes } = buildLayout();
+    setNodes(freshNodes);
+  }, [nodes, readOnly, onMove, tree, buildLayout, setNodes]);
 
   if (!tree?.length) {
     return (
@@ -126,12 +185,29 @@ function GraphCanvas({
     );
   }
 
+  const targetLabel = dropTarget ? nodes.find((n) => n.id === dropTarget.id)?.data?.label : null;
+
   return (
-    <div className="h-full min-h-[480px] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]">
+    <div className={`relative h-full min-h-[480px] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] ${draggingNodeId ? 'cursor-grabbing' : ''}`}>
+      {focusedNode && (
+        <div className="absolute left-3 top-3 z-10 flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50/95 px-3 py-1.5 text-xs font-medium text-indigo-700 shadow-sm backdrop-blur">
+          <Scan size={12} />
+          <span>Focused on "{focusedNode.display_name}"</span>
+          <button
+            type="button"
+            title="Exit focused view"
+            className="rounded-full p-0.5 text-indigo-500 hover:bg-indigo-100 hover:text-indigo-800"
+            onClick={() => setFocusedId(null)}
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
       <ReactFlow
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        onNodesChange={onNodesChange}
         nodesDraggable={!readOnly}
         nodesConnectable={false}
         elementsSelectable={!readOnly}
@@ -151,8 +227,24 @@ function GraphCanvas({
         />
       </ReactFlow>
       {!readOnly && (
-        <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-white/90 px-4 py-1.5 text-[11px] text-[var(--color-text-muted)] shadow-sm backdrop-blur">
-          Drag a node onto another to re-parent
+        <div
+          className={`pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full px-4 py-1.5 text-[11px] font-medium shadow-sm backdrop-blur transition-colors ${
+            draggingNodeId
+              ? dropTarget?.valid
+                ? 'bg-emerald-600 text-white'
+                : dropTarget && !dropTarget.valid
+                  ? 'bg-red-600 text-white'
+                  : 'bg-white/90 text-[var(--color-text-muted)]'
+              : 'bg-white/90 text-[var(--color-text-muted)]'
+          }`}
+        >
+          {draggingNodeId
+            ? dropTarget?.valid
+              ? `Release to move under "${targetLabel}"`
+              : dropTarget && !dropTarget.valid
+                ? "Can't drop here"
+                : 'Drag onto a node to re-parent'
+            : 'Drag a node onto another to re-parent'}
         </div>
       )}
     </div>
