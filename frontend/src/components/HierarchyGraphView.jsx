@@ -50,9 +50,12 @@ function GraphCanvas({
   onDelete,
   onClone,
   onMove,
+  canMoveNode,
 }) {
   const { fitView } = useReactFlow();
   const draggingRef = useRef(null);
+  const canMoveNodeRef = useRef(canMoveNode);
+  canMoveNodeRef.current = canMoveNode;
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges] = useEdgesState([]);
   const [dropTarget, setDropTarget] = useState(null); // { id, valid }
@@ -131,15 +134,33 @@ function GraphCanvas({
     setDraggingNodeId(node.id);
   }, []);
 
+  const evaluateDrop = useCallback((draggedId, targetId) => {
+    if (!targetId || targetId === draggedId) {
+      return { valid: false, reason: null };
+    }
+    if (isDescendant(tree, draggedId, targetId)) {
+      return { valid: false, reason: "Can't move a node under its descendant" };
+    }
+    const check = canMoveNodeRef.current?.(draggedId, targetId, null);
+    if (check && !check.valid) {
+      return { valid: false, reason: check.reason };
+    }
+    return { valid: true, reason: null };
+  }, [tree]);
+
   const onNodeDrag = useCallback((_, node) => {
     const targetId = findDropTarget(nodes, node.id, node.position);
     if (!targetId) {
       setDropTarget(null);
       return;
     }
-    const valid = targetId !== node.id && !isDescendant(tree, node.id, targetId);
-    setDropTarget((prev) => (prev?.id === targetId && prev?.valid === valid ? prev : { id: targetId, valid }));
-  }, [nodes, tree]);
+    const { valid, reason } = evaluateDrop(node.id, targetId);
+    setDropTarget((prev) => (
+      prev?.id === targetId && prev?.valid === valid && prev?.reason === reason
+        ? prev
+        : { id: targetId, valid, reason }
+    ));
+  }, [nodes, evaluateDrop]);
 
   const onNodeDragStop = useCallback((_, node) => {
     const draggedId = draggingRef.current;
@@ -148,17 +169,21 @@ function GraphCanvas({
     setDropTarget(null);
 
     const targetId = findDropTarget(nodes, draggedId, node.position);
-    const valid = targetId && targetId !== draggedId && !isDescendant(tree, draggedId, targetId);
+    const { valid } = evaluateDrop(draggedId, targetId);
 
-    if (!readOnly && draggedId && onMove && valid) {
+    if (!readOnly && draggedId && onMove && targetId) {
       onMove(draggedId, targetId, null);
+      if (!valid) {
+        const { nodes: freshNodes } = buildLayout();
+        setNodes(freshNodes);
+      }
       return;
     }
 
-    // Invalid or no target: snap back to the last known-good layout.
+    // No target: snap back to the last known-good layout.
     const { nodes: freshNodes } = buildLayout();
     setNodes(freshNodes);
-  }, [nodes, readOnly, onMove, tree, buildLayout, setNodes]);
+  }, [nodes, readOnly, onMove, evaluateDrop, buildLayout, setNodes]);
 
   if (!tree?.length) {
     return (
@@ -242,7 +267,7 @@ function GraphCanvas({
             ? dropTarget?.valid
               ? `Release to move under "${targetLabel}"`
               : dropTarget && !dropTarget.valid
-                ? "Can't drop here"
+                ? (dropTarget.reason || "Can't drop here")
                 : 'Drag onto a node to re-parent'
             : 'Drag a node onto another to re-parent'}
         </div>

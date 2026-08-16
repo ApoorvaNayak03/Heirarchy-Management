@@ -248,6 +248,9 @@ class NodeService:
             replace_existing=True,
         )
 
+        if would_create_cycle(db, version_id, version_node_id, payload.new_parent_version_node_id):
+            raise HTTPException(status_code=409, detail="Move would create a cycle in the hierarchy")
+
         edges = db.query(HierarchyEdge).filter(HierarchyEdge.hierarchy_version_id == version_id, HierarchyEdge.child_version_node_id == version_node_id).all()
         old_parent = edges[0].parent_version_node_id if edges else None
         for edge in edges:

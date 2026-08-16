@@ -14,7 +14,8 @@ import Input from '../components/ui/Input';
 import StatusBadge from '../components/StatusBadge';
 import { useToast } from '../hooks/useToast';
 import { hierarchyService, propertyService, versionService } from '../services';
-import { countNodes, filterTree, findNode, flattenTree } from '../utils/treeUtils';
+import { countNodes, filterTree } from '../utils/treeUtils';
+import { buildMoveValidator, checkMove, resolveMoveTarget } from '../utils/moveValidation';
 
 const EDITABLE = ['DRAFT', 'REJECTED'];
 
@@ -203,32 +204,33 @@ export default function HierarchyWorkspacePage() {
     }
   };
 
+  const validateMove = useMemo(
+    () => buildMoveValidator(detail?.node_types || [], detail?.structural_rules || []),
+    [detail?.node_types, detail?.structural_rules],
+  );
+
+  const canMoveNode = useCallback(
+    (draggedId, targetRef, position) => checkMove(draggedId, targetRef, position, tree, validateMove),
+    [tree, validateMove],
+  );
+
   const handleMove = async (draggedId, targetRef, position) => {
     if (readOnly) return;
+
+    const moveCheck = canMoveNode(draggedId, targetRef, position);
+    if (!moveCheck.valid) {
+      showToast(moveCheck.reason, 'error');
+      return;
+    }
+
+    const resolved = resolveMoveTarget(draggedId, targetRef, position, tree);
+    if (!resolved) return;
+
     setBusy(true);
     try {
-      let newParentId = null;
-      let siblingOrder = null;
-
-      const flat = flattenTree(tree);
-
-      if (targetRef === null) {
-        newParentId = null;
-        siblingOrder = 0;
-      } else if (position === 'before' || position === 'after') {
-        const target = flat.find((n) => n.version_node_id === targetRef);
-        if (!target) return;
-        newParentId = target.parentId;
-        siblingOrder = position === 'before' ? target.siblingIndex : target.siblingIndex + 1;
-      } else {
-        newParentId = targetRef;
-        const targetNode = findNode(tree, targetRef);
-        siblingOrder = targetNode?.children?.length || 0;
-      }
-
       await versionService.moveNode(versionId, draggedId, {
-        new_parent_version_node_id: newParentId,
-        sibling_order: siblingOrder,
+        new_parent_version_node_id: resolved.newParentId,
+        sibling_order: resolved.siblingOrder,
       });
       showToast('Node moved', 'success');
       await loadVersion(versionId);
@@ -325,7 +327,8 @@ export default function HierarchyWorkspacePage() {
     onDelete: setDeleteNode,
     onClone: (node) => { setCloneNode(node); setCloneName(`${node.display_name} Copy`); },
     onMove: handleMove,
-  }), [versionId, readOnly, tree]);
+    canMoveNode,
+  }), [versionId, readOnly, tree, canMoveNode]);
 
   if (loading && !detail) {
     return (
@@ -443,6 +446,7 @@ export default function HierarchyWorkspacePage() {
               onClone={(node) => { setCloneNode(node); setCloneName(`${node.display_name} Copy`); }}
               onInlineEdit={handleInlineEdit}
               onMove={handleMove}
+              canMoveNode={canMoveNode}
             />
           ) : (
             <HierarchyGraphView

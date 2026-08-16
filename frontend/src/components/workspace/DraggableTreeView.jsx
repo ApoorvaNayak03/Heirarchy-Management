@@ -37,13 +37,17 @@ function typeColor(name = '') {
   return TYPE_COLORS[Math.abs(hash) % TYPE_COLORS.length];
 }
 
-function DropIndicator({ id, active }) {
+function DropIndicator({ id, active, invalid }) {
   const { setNodeRef, isOver } = useDroppable({ id });
   return (
     <div
       ref={setNodeRef}
       className={`mx-2 h-1 rounded-full transition-all ${
-        isOver && active ? 'bg-[var(--color-accent)] opacity-100' : 'opacity-0'
+        isOver && active
+          ? invalid
+            ? 'bg-red-400 opacity-100'
+            : 'bg-[var(--color-accent)] opacity-100'
+          : 'opacity-0'
       }`}
     />
   );
@@ -63,6 +67,8 @@ function TreeNodeRow({
   isLast,
   dragActive,
   isDragging,
+  canMoveNode,
+  activeDragId,
 }) {
   const [expanded, setExpanded] = useState(level < 2);
   const [editing, setEditing] = useState(false);
@@ -99,6 +105,13 @@ function TreeNodeRow({
     }
   };
 
+  const dropAsChildValid = activeDragId && canMoveNode
+    ? canMoveNode(activeDragId, node.version_node_id, null).valid
+    : true;
+  const dropBeforeValid = activeDragId && canMoveNode
+    ? canMoveNode(activeDragId, node.version_node_id, 'before').valid
+    : true;
+
   const style = transform
     ? { transform: CSS.Translate.toString(transform), opacity: selfDragging ? 0.4 : 1 }
     : undefined;
@@ -118,7 +131,7 @@ function TreeNodeRow({
         </>
       )}
 
-      {!readOnly && <DropIndicator id={`before-${node.version_node_id}`} active={dragActive} />}
+      {!readOnly && <DropIndicator id={`before-${node.version_node_id}`} active={dragActive} invalid={!dropBeforeValid} />}
 
       <div
         ref={(el) => {
@@ -128,7 +141,9 @@ function TreeNodeRow({
         style={{ ...style, marginLeft: `${level * 24}px` }}
         className={`group relative mb-0.5 flex items-center gap-1 rounded-lg border px-1.5 py-1.5 text-[13px] transition-all ${
           isOver && dragActive
-            ? 'border-[var(--color-accent)] bg-[var(--color-accent-muted)] ring-2 ring-[var(--color-accent)]/30'
+            ? dropAsChildValid
+              ? 'border-[var(--color-accent)] bg-[var(--color-accent-muted)] ring-2 ring-[var(--color-accent)]/30'
+              : 'border-red-300 bg-red-50 ring-2 ring-red-200'
             : selected
               ? 'border-[var(--color-accent)] bg-[var(--color-accent-muted)] shadow-sm'
               : 'border-transparent hover:border-[var(--color-border)] hover:bg-white hover:shadow-sm'
@@ -213,10 +228,18 @@ function TreeNodeRow({
           isLast={idx === node.children.length - 1}
           dragActive={dragActive}
           isDragging={isDragging}
+          canMoveNode={canMoveNode}
+          activeDragId={activeDragId}
         />
       ))}
 
-      {!readOnly && isLast && level === 0 && <DropIndicator id={`after-${node.version_node_id}`} active={dragActive} />}
+      {!readOnly && isLast && level === 0 && (
+        <DropIndicator
+          id={`after-${node.version_node_id}`}
+          active={dragActive}
+          invalid={activeDragId && canMoveNode ? !canMoveNode(activeDragId, node.version_node_id, 'after').valid : false}
+        />
+      )}
     </div>
   );
 }
@@ -234,7 +257,7 @@ function DragPreview({ node }) {
   );
 }
 
-function RootDropZone({ active, readOnly }) {
+function RootDropZone({ active, readOnly, invalid }) {
   const { setNodeRef, isOver } = useDroppable({ id: 'root-drop', disabled: readOnly });
   if (readOnly) return null;
   return (
@@ -242,11 +265,13 @@ function RootDropZone({ active, readOnly }) {
       ref={setNodeRef}
       className={`mb-3 rounded-lg border-2 border-dashed px-4 py-3 text-center text-xs transition-all ${
         isOver && active
-          ? 'border-[var(--color-accent)] bg-[var(--color-accent-muted)] text-[var(--color-accent)]'
+          ? invalid
+            ? 'border-red-300 bg-red-50 text-red-600'
+            : 'border-[var(--color-accent)] bg-[var(--color-accent-muted)] text-[var(--color-accent)]'
           : 'border-[var(--color-border-strong)] text-[var(--color-text-muted)]'
       }`}
     >
-      Drop here to make a root node
+      {isOver && active && invalid ? "Can't drop here — not allowed as root" : 'Drop here to make a root node'}
     </div>
   );
 }
@@ -261,10 +286,13 @@ export default function DraggableTreeView({
   onClone,
   onInlineEdit,
   onMove,
+  canMoveNode,
   readOnly,
 }) {
   const [activeId, setActiveId] = useState(null);
   const [activeNode, setActiveNode] = useState(null);
+
+  const rootDropInvalid = activeId && canMoveNode ? !canMoveNode(activeId, null, null).valid : false;
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -293,7 +321,7 @@ export default function DraggableTreeView({
     const overId = String(over.id);
 
     if (overId === 'root-drop') {
-      onMove?.(draggedId, null, 0);
+      onMove?.(draggedId, null, null);
       return;
     }
 
@@ -348,7 +376,7 @@ export default function DraggableTreeView({
       onDragEnd={handleDragEnd}
     >
       <div className="h-full min-h-[480px] overflow-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-        <RootDropZone active={!!activeId} readOnly={readOnly} />
+        <RootDropZone active={!!activeId} readOnly={readOnly} invalid={rootDropInvalid} />
         {tree.map((node, idx) => (
           <TreeNodeRow
             key={node.version_node_id}
@@ -365,6 +393,8 @@ export default function DraggableTreeView({
             isLast={idx === tree.length - 1}
             dragActive={!!activeId}
             isDragging={activeId === node.version_node_id}
+            canMoveNode={canMoveNode}
+            activeDragId={activeId}
           />
         ))}
       </div>
