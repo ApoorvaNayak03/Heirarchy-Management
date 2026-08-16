@@ -31,6 +31,18 @@ export default function HierarchiesPage() {
     }
   };
 
+  const remove = async (id) => {
+    if (!window.confirm('Delete this hierarchy? This cannot be undone.')) return;
+    try {
+      await hierarchyService.delete(id);
+      showToast('Hierarchy deleted', 'success');
+      const res = await hierarchyService.list();
+      setItems(res.data);
+    } catch (err) {
+      showToast(err.response?.data?.detail || 'Delete failed', 'error');
+    }
+  };
+
   return (
     <div>
       <PageHeader title="Hierarchies" actions={<button type="button" onClick={() => setModal(true)} className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white">Create</button>} />
@@ -39,7 +51,14 @@ export default function HierarchiesPage() {
           { key: 'code', label: 'Code' },
           { key: 'name', label: 'Name' },
           { key: 'status', label: 'Status', render: (r) => <StatusBadge status={r.status} /> },
-          { key: 'actions', label: 'Actions', render: (r) => <Link to={`/hierarchies/${r.hierarchy_id}`} className="text-blue-600">View</Link> },
+          {
+            key: 'actions', label: 'Actions', render: (r) => (
+              <div className="flex gap-2">
+                <Link to={`/hierarchies/${r.hierarchy_id}`} className="text-blue-600">View</Link>
+                <button type="button" className="text-red-600" onClick={() => remove(r.hierarchy_id)}>Delete</button>
+              </div>
+            ),
+          },
         ]}
         data={items.map((i) => ({ ...i, id: i.hierarchy_id }))}
       />

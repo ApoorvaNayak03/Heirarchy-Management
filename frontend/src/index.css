@@ -11,8 +11,12 @@
   --color-accent: #2563eb;
   --color-accent-hover: #1d4ed8;
   --color-accent-muted: #eff6ff;
+  --color-hero-from: #eff6ff;
+  --color-hero-to: #f8f9fb;
   --radius-sm: 4px;
   --radius-md: 6px;
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-card-hover: 0 4px 10px rgba(16, 24, 40, 0.06), 0 8px 24px rgba(37, 99, 235, 0.08);
 }
 
 body {
