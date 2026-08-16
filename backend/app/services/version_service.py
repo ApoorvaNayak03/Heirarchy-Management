@@ -44,18 +44,32 @@ from app.validators.validation_service import ValidationService
 
 class VersionService:
     @staticmethod
-    def list_versions(db: Session, hierarchy_id: str | None = None, status: str | None = None):
+    def list_versions(db: Session, user: User, hierarchy_id: str | None = None, status: str | None = None):
         query = db.query(HierarchyVersion)
         if hierarchy_id:
             query = query.filter(HierarchyVersion.hierarchy_id == hierarchy_id)
         if status:
             query = query.filter(HierarchyVersion.status == status)
-        return query.order_by(HierarchyVersion.created_at.desc()).all()
+        versions = query.order_by(HierarchyVersion.created_at.desc()).all()
+        return [v for v in versions if VersionService.can_user_view_version(user, v)]
+
+    @staticmethod
+    def can_user_view_version(user: User, version: HierarchyVersion) -> bool:
+        if version.status != VersionStatus.DRAFT.value:
+            return True
+        return user.username == version.created_by or user.username == "admin"
 
     @staticmethod
     def get_version(db: Session, version_id: str) -> HierarchyVersion:
         version = db.query(HierarchyVersion).filter(HierarchyVersion.hierarchy_version_id == version_id).first()
         if not version:
+            raise HTTPException(status_code=404, detail="Version not found")
+        return version
+
+    @staticmethod
+    def get_version_for_user(db: Session, version_id: str, user: User) -> HierarchyVersion:
+        version = VersionService.get_version(db, version_id)
+        if not VersionService.can_user_view_version(user, version):
             raise HTTPException(status_code=404, detail="Version not found")
         return version
 

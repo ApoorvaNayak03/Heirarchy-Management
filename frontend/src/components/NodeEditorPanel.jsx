@@ -1,4 +1,5 @@
 import { GitBranchPlus, Network, Pencil, TreePine } from 'lucide-react';
+import CustomPropertiesEditor from './CustomPropertiesEditor';
 import PropertyFieldRenderer from './PropertyFieldRenderer';
 import Button from './ui/Button';
 import FormField from './ui/FormField';
@@ -100,6 +101,11 @@ export default function NodeEditorPanel({
                     />
                   </FormField>
                 ))}
+                <CustomPropertiesEditor
+                  properties={addForm.properties}
+                  definedCodes={propertyDefs.map((d) => d.property_code)}
+                  onChange={(properties) => onAddFormChange({ ...addForm, properties })}
+                />
               </>
             ) : selected ? (
               <>
@@ -125,6 +131,11 @@ export default function NodeEditorPanel({
                     />
                   </FormField>
                 ))}
+                <CustomPropertiesEditor
+                  properties={editForm.properties}
+                  definedCodes={propertyDefs.map((d) => d.property_code)}
+                  onChange={(properties) => onEditFormChange({ ...editForm, properties })}
+                />
               </>
             ) : (
               <div className="rounded-lg border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg)] px-4 py-8 text-center">

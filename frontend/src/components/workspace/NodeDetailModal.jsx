@@ -1,3 +1,4 @@
+import CustomPropertiesEditor from '../CustomPropertiesEditor';
 import PropertyFieldRenderer from '../PropertyFieldRenderer';
 import Modal, { ModalFooter } from '../Modal';
 import Button from '../ui/Button';
@@ -86,6 +87,11 @@ export default function NodeDetailModal({
               />
             </FormField>
           ))}
+          <CustomPropertiesEditor
+            properties={form.properties}
+            definedCodes={propertyDefs.map((d) => d.property_code)}
+            onChange={(properties) => onChange({ ...form, properties })}
+          />
         </div>
       )}
 

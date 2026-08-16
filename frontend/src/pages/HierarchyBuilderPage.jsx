@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ConfirmDialog from '../components/ConfirmDialog';
+import CustomPropertiesEditor from '../components/CustomPropertiesEditor';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import PropertyFieldRenderer from '../components/PropertyFieldRenderer';
@@ -193,6 +194,11 @@ export default function HierarchyBuilderPage() {
               />
             </div>
           ))}
+          <CustomPropertiesEditor
+            properties={editForm.properties}
+            definedCodes={propertyDefs.map((d) => d.property_code)}
+            onChange={(properties) => setEditForm({ ...editForm, properties })}
+          />
           <button type="button" onClick={saveEdit} className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white">Save</button>
         </div>
       </Modal>

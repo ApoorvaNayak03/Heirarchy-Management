@@ -40,13 +40,13 @@ router = APIRouter(tags=["Versions"])
 
 
 @router.get("/api/versions", response_model=list[VersionResponse])
-def list_versions(hierarchy_id: str | None = None, status: str | None = None, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    return VersionService.list_versions(db, hierarchy_id, status)
+def list_versions(hierarchy_id: str | None = None, status: str | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return VersionService.list_versions(db, user, hierarchy_id, status)
 
 
 @router.get("/api/versions/{version_id}", response_model=VersionResponse)
-def get_version(version_id: str, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    return VersionService.get_version(db, version_id)
+def get_version(version_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return VersionService.get_version_for_user(db, version_id, user)
 
 
 @router.post("/api/hierarchies/{hierarchy_id}/versions", response_model=VersionResponse)
@@ -83,7 +83,8 @@ def effective_version(hierarchy_id: str, business_date: date, db: Session = Depe
 
 
 @router.get("/api/versions/{version_id}/tree", response_model=list[TreeNodeResponse])
-def get_tree(version_id: str, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def get_tree(version_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    VersionService.get_version_for_user(db, version_id, user)
     return NodeService.build_tree(db, version_id)
 
 
