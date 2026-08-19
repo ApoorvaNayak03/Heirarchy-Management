@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models import ApprovalRequest, User
+from app.models import ApprovalRequest, HierarchyNode, HierarchyVersionNode, User
 from app.schemas.schemas import (
     ActivateVersionRequest,
     ApprovalActionRequest,
@@ -18,6 +18,7 @@ from app.schemas.schemas import (
     CompareResult,
     ConflictsResponse,
     CopySubtreeRequest,
+    MergeDraftRequest,
     MessageResponse,
     NodeCloneRequest,
     NodeCreate,
@@ -39,14 +40,33 @@ from app.validators.validation_service import ValidationService
 router = APIRouter(tags=["Versions"])
 
 
+def _to_version_response(db: Session, version) -> VersionResponse:
+    response = VersionResponse.model_validate(version)
+    if version.scope_root_hierarchy_node_id:
+        node = db.query(HierarchyNode).filter(HierarchyNode.hierarchy_node_id == version.scope_root_hierarchy_node_id).first()
+        if node:
+            vn = (
+                db.query(HierarchyVersionNode)
+                .filter(
+                    HierarchyVersionNode.hierarchy_version_id == version.hierarchy_version_id,
+                    HierarchyVersionNode.hierarchy_node_id == node.hierarchy_node_id,
+                )
+                .first()
+            )
+            response.scope_root_node_name = vn.display_name if vn else None
+    return response
+
+
 @router.get("/api/versions", response_model=list[VersionResponse])
 def list_versions(hierarchy_id: str | None = None, status: str | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return VersionService.list_versions(db, user, hierarchy_id, status)
+    versions = VersionService.list_versions(db, user, hierarchy_id, status)
+    return [_to_version_response(db, v) for v in versions]
 
 
 @router.get("/api/versions/{version_id}", response_model=VersionResponse)
 def get_version(version_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return VersionService.get_version_for_user(db, version_id, user)
+    version = VersionService.get_version_for_user(db, version_id, user)
+    return _to_version_response(db, version)
 
 
 @router.post("/api/hierarchies/{hierarchy_id}/versions", response_model=VersionResponse)
@@ -57,6 +77,18 @@ def create_version(hierarchy_id: str, payload: VersionCreate, db: Session = Depe
 @router.post("/api/versions/{version_id}/copy", response_model=VersionResponse)
 def copy_version(version_id: str, payload: VersionCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return VersionService.create_from_version(db, version_id, payload, user)
+
+
+@router.post("/api/versions/{version_id}/nodes/{node_id}/branch", response_model=VersionResponse)
+def branch_from_node(version_id: str, node_id: str, payload: VersionCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    source_vn = db.query(HierarchyVersionNode).filter(
+        HierarchyVersionNode.version_node_id == node_id,
+        HierarchyVersionNode.hierarchy_version_id == version_id,
+    ).first()
+    if not source_vn:
+        raise HTTPException(status_code=404, detail="Node not found")
+    version = VersionService.create_from_node(db, version_id, source_vn.hierarchy_node_id, payload, user)
+    return _to_version_response(db, version)
 
 
 @router.patch("/api/versions/{version_id}", response_model=VersionResponse)
@@ -162,6 +194,12 @@ def get_conflicts(version_id: str, db: Session = Depends(get_db), _: User = Depe
 @router.post("/api/versions/{version_id}/resolve-conflicts", response_model=VersionResponse)
 def resolve_conflicts(version_id: str, payload: ResolveConflictsRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return ConflictService.resolve_conflicts(db, version_id, payload, user)
+
+
+@router.post("/api/versions/{version_id}/merge", response_model=VersionResponse)
+def merge_draft(version_id: str, payload: MergeDraftRequest = MergeDraftRequest(), db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    active = ConflictService.merge_into_active(db, version_id, payload, user)
+    return _to_version_response(db, active)
 
 
 @router.get("/api/approval-requests", response_model=list[ApprovalRequestResponse])

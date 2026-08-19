@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections import defaultdict
 from datetime import date, datetime
 
 from fastapi import HTTPException
@@ -23,6 +24,7 @@ from app.schemas.schemas import (
     ApprovalActionRequest,
     ConflictItem,
     ConflictsResponse,
+    MergeDraftRequest,
     ResolveConflictsRequest,
     SubmitApprovalRequest,
     VersionCreate,
@@ -180,6 +182,107 @@ class VersionService:
             changed_by=user.username,
             field_name="based_on_version_id",
             new_value=source.hierarchy_version_id,
+        )
+        db.commit()
+        db.refresh(target)
+        return target
+
+    @staticmethod
+    def create_from_node(db: Session, source_version_id: str, hierarchy_node_id: str, payload: VersionCreate, user: User) -> HierarchyVersion:
+        source = VersionService.get_version(db, source_version_id)
+
+        source_nodes = (
+            db.query(HierarchyVersionNode)
+            .filter(
+                HierarchyVersionNode.hierarchy_version_id == source.hierarchy_version_id,
+                HierarchyVersionNode.node_status == NodeStatus.ACTIVE.value,
+            )
+            .all()
+        )
+        source_lookup = {n.hierarchy_node_id: n for n in source_nodes}
+        if hierarchy_node_id not in source_lookup:
+            raise HTTPException(status_code=404, detail="Node not found in source version")
+
+        source_edges = db.query(HierarchyEdge).filter(HierarchyEdge.hierarchy_version_id == source.hierarchy_version_id).all()
+        vn_by_id = {n.version_node_id: n for n in source_nodes}
+        root_vn_id = source_lookup[hierarchy_node_id].version_node_id
+
+        subtree_vn_ids: set[str] = set()
+
+        def collect(vn_id: str):
+            subtree_vn_ids.add(vn_id)
+            for edge in source_edges:
+                if edge.parent_version_node_id == vn_id and edge.child_version_node_id in vn_by_id:
+                    collect(edge.child_version_node_id)
+
+        collect(root_vn_id)
+
+        count = db.query(HierarchyVersion).filter(HierarchyVersion.hierarchy_id == source.hierarchy_id).count()
+        target = HierarchyVersion(
+            hierarchy_version_id=str(uuid.uuid4()),
+            hierarchy_id=source.hierarchy_id,
+            version_no=payload.version_no or f"v{count + 1}",
+            version_name=payload.version_name or f"Draft of {source_lookup[hierarchy_node_id].display_name}",
+            description=payload.description or source.description,
+            valid_from=payload.valid_from,
+            valid_to=payload.valid_to,
+            status=VersionStatus.DRAFT.value,
+            based_on_version_id=source.hierarchy_version_id,
+            scope_root_hierarchy_node_id=hierarchy_node_id,
+            created_by=user.username,
+        )
+        db.add(target)
+        db.flush()
+
+        node_map: dict[str, str] = {}
+        for vn_id in subtree_vn_ids:
+            src_node = vn_by_id[vn_id]
+            new_vn = HierarchyVersionNode(
+                version_node_id=str(uuid.uuid4()),
+                hierarchy_version_id=target.hierarchy_version_id,
+                hierarchy_node_id=src_node.hierarchy_node_id,
+                display_name=src_node.display_name,
+                sibling_order=src_node.sibling_order,
+                node_status=NodeStatus.ACTIVE.value,
+                properties=src_node.properties.copy() if src_node.properties else {},
+            )
+            db.add(new_vn)
+            db.flush()
+            node_map[vn_id] = new_vn.version_node_id
+            lineage = HierarchyCopyLineage(
+                lineage_id=str(uuid.uuid4()),
+                target_version_node_id=new_vn.version_node_id,
+                source_hierarchy_version_id=source.hierarchy_version_id,
+                source_version_node_id=src_node.version_node_id,
+                operation_type=LineageOperationType.COPY_SUBTREE.value,
+                created_by=user.username,
+            )
+            db.add(lineage)
+
+        for edge in source_edges:
+            if edge.child_version_node_id not in node_map:
+                continue
+            if edge.child_version_node_id == root_vn_id:
+                continue  # subtree root has no parent within the draft
+            new_edge = HierarchyEdge(
+                edge_id=str(uuid.uuid4()),
+                hierarchy_version_id=target.hierarchy_version_id,
+                child_version_node_id=node_map[edge.child_version_node_id],
+                parent_version_node_id=node_map.get(edge.parent_version_node_id) if edge.parent_version_node_id else None,
+                relationship_order=edge.relationship_order,
+            )
+            db.add(new_edge)
+
+        AuditService.log_change(
+            db,
+            hierarchy_id=source.hierarchy_id,
+            hierarchy_version_id=target.hierarchy_version_id,
+            entity_type=ChangeEntityType.VERSION,
+            entity_id=target.hierarchy_version_id,
+            action=ChangeAction.COPY,
+            changed_by=user.username,
+            field_name="scope_root_hierarchy_node_id",
+            new_value=hierarchy_node_id,
         )
         db.commit()
         db.refresh(target)
@@ -639,3 +742,195 @@ class ConflictService:
         db.commit()
         db.refresh(proposed)
         return proposed
+
+    @staticmethod
+    def merge_into_active(db: Session, version_id: str, payload: MergeDraftRequest, user: User) -> HierarchyVersion:
+        """Merge a node-scoped draft's subtree back into the hierarchy's active version.
+
+        Non-conflicting fields are auto-applied onto `active`. Conflicting fields (present
+        in `payload.resolutions`) are applied per the caller's choice: "draft" copies the
+        draft's value onto `active`, "active" leaves `active` untouched.
+        """
+        draft = VersionService.get_version(db, version_id)
+        if not draft.scope_root_hierarchy_node_id:
+            raise HTTPException(status_code=409, detail="Only node-scoped drafts can be merged")
+        if draft.status != VersionStatus.APPROVED.value:
+            raise HTTPException(status_code=409, detail="Only approved drafts can be merged")
+
+        active = ConflictService._active_version(db, draft)
+        if not active:
+            raise HTTPException(status_code=409, detail="No active version to merge into")
+
+        conflicts = ConflictService.get_conflicts(db, version_id)
+        resolutions_by_key = {(r.hierarchy_node_id, r.field): r.choice for r in payload.resolutions}
+        unresolved = [c for c in conflicts.conflicts if (c.hierarchy_node_id, c.field) not in resolutions_by_key]
+        if unresolved:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "Unresolved conflicts", "conflicts": [c.model_dump() for c in unresolved]},
+            )
+
+        draft_nodes = {
+            n.hierarchy_node_id: n
+            for n in db.query(HierarchyVersionNode).filter(HierarchyVersionNode.hierarchy_version_id == version_id)
+        }
+        active_nodes = {
+            n.hierarchy_node_id: n
+            for n in db.query(HierarchyVersionNode).filter(
+                HierarchyVersionNode.hierarchy_version_id == active.hierarchy_version_id,
+                HierarchyVersionNode.node_status == NodeStatus.ACTIVE.value,
+            )
+        }
+        draft_parents = ComparisonService.get_parent_map_by_hierarchy_id(db, version_id)
+        active_edges = db.query(HierarchyEdge).filter(HierarchyEdge.hierarchy_version_id == active.hierarchy_version_id).all()
+        active_edge_by_child = {e.child_version_node_id: e for e in active_edges}
+
+        conflicted_fields: dict[str, set[str]] = defaultdict(set)
+        for c in conflicts.conflicts:
+            conflicted_fields[c.hierarchy_node_id].add(c.field)
+
+        def field_choice(hn_id: str, field: str) -> str:
+            return resolutions_by_key.get((hn_id, field), "draft")
+
+        for hn_id, draft_node in draft_nodes.items():
+            active_node = active_nodes.get(hn_id)
+
+            if draft_node.node_status == NodeStatus.REMOVED.value:
+                if active_node and active_node.node_status != NodeStatus.REMOVED.value:
+                    active_node.node_status = NodeStatus.REMOVED.value
+                    AuditService.log_change(
+                        db,
+                        hierarchy_id=active.hierarchy_id,
+                        hierarchy_version_id=active.hierarchy_version_id,
+                        entity_type=ChangeEntityType.VERSION_NODE,
+                        entity_id=active_node.version_node_id,
+                        action=ChangeAction.DELETE,
+                        changed_by=user.username,
+                        field_name="merge:removed",
+                    )
+                continue
+
+            if not active_node:
+                if field_choice(hn_id, "display_name") == "active":
+                    continue  # conflict resolved to discard the draft's addition
+                if hn_id == draft.scope_root_hierarchy_node_id:
+                    # The scope root's parent lives outside the draft's subtree and was
+                    # never recorded — this shouldn't normally happen (the root already
+                    # exists in active), but guard against inventing a root-level node.
+                    continue
+                new_parent_hn_id = draft_parents.get(hn_id)
+                new_parent_vn_id = active_nodes[new_parent_hn_id].version_node_id if new_parent_hn_id in active_nodes else None
+                new_active_node = HierarchyVersionNode(
+                    version_node_id=str(uuid.uuid4()),
+                    hierarchy_version_id=active.hierarchy_version_id,
+                    hierarchy_node_id=hn_id,
+                    display_name=draft_node.display_name,
+                    sibling_order=draft_node.sibling_order,
+                    node_status=NodeStatus.ACTIVE.value,
+                    properties=draft_node.properties.copy() if draft_node.properties else {},
+                )
+                db.add(new_active_node)
+                db.flush()
+                active_nodes[hn_id] = new_active_node
+                db.add(
+                    HierarchyEdge(
+                        edge_id=str(uuid.uuid4()),
+                        hierarchy_version_id=active.hierarchy_version_id,
+                        child_version_node_id=new_active_node.version_node_id,
+                        parent_version_node_id=new_parent_vn_id,
+                    )
+                )
+                AuditService.log_change(
+                    db,
+                    hierarchy_id=active.hierarchy_id,
+                    hierarchy_version_id=active.hierarchy_version_id,
+                    entity_type=ChangeEntityType.VERSION_NODE,
+                    entity_id=new_active_node.version_node_id,
+                    action=ChangeAction.CREATE,
+                    changed_by=user.username,
+                    field_name="merge:added",
+                    new_value=draft_node.display_name,
+                )
+                continue
+
+            if field_choice(hn_id, "display_name") == "draft" and active_node.display_name != draft_node.display_name:
+                old_value = active_node.display_name
+                active_node.display_name = draft_node.display_name
+                AuditService.log_change(
+                    db,
+                    hierarchy_id=active.hierarchy_id,
+                    hierarchy_version_id=active.hierarchy_version_id,
+                    entity_type=ChangeEntityType.VERSION_NODE,
+                    entity_id=active_node.version_node_id,
+                    action=ChangeAction.UPDATE,
+                    changed_by=user.username,
+                    field_name="merge:display_name",
+                    old_value=old_value,
+                    new_value=active_node.display_name,
+                )
+
+            if hn_id != draft.scope_root_hierarchy_node_id and field_choice(hn_id, "parent") == "draft":
+                # The scope root's parent lives outside the draft's subtree, so the draft
+                # never recorded it — only descendants within the subtree can have their
+                # parent field merged.
+                new_parent_hn_id = draft_parents.get(hn_id)
+                new_parent_vn_id = active_nodes[new_parent_hn_id].version_node_id if new_parent_hn_id in active_nodes else None
+                edge = active_edge_by_child.get(active_node.version_node_id)
+                if edge and edge.parent_version_node_id != new_parent_vn_id:
+                    old_parent = edge.parent_version_node_id
+                    edge.parent_version_node_id = new_parent_vn_id
+                    AuditService.log_change(
+                        db,
+                        hierarchy_id=active.hierarchy_id,
+                        hierarchy_version_id=active.hierarchy_version_id,
+                        entity_type=ChangeEntityType.EDGE,
+                        entity_id=edge.edge_id,
+                        action=ChangeAction.MOVE,
+                        changed_by=user.username,
+                        field_name="merge:parent",
+                        old_value=old_parent,
+                        new_value=new_parent_vn_id,
+                    )
+
+            draft_props = draft_node.properties or {}
+            active_props = active_node.properties or {}
+            merged_props = dict(active_props)
+            changed_props = False
+            for key in set(draft_props) | set(active_props):
+                field_name = f"property:{key}"
+                if field_choice(hn_id, field_name) != "draft":
+                    continue
+                if draft_props.get(key) != active_props.get(key):
+                    merged_props[key] = draft_props.get(key)
+                    changed_props = True
+            if changed_props:
+                old_props = dict(active_node.properties or {})
+                active_node.properties = merged_props
+                AuditService.log_change(
+                    db,
+                    hierarchy_id=active.hierarchy_id,
+                    hierarchy_version_id=active.hierarchy_version_id,
+                    entity_type=ChangeEntityType.PROPERTY,
+                    entity_id=active_node.version_node_id,
+                    action=ChangeAction.UPDATE,
+                    changed_by=user.username,
+                    field_name="merge:properties",
+                    old_value=str(old_props),
+                    new_value=str(merged_props),
+                )
+
+        draft.merged_at = datetime.utcnow()
+        AuditService.log_change(
+            db,
+            hierarchy_id=active.hierarchy_id,
+            hierarchy_version_id=active.hierarchy_version_id,
+            entity_type=ChangeEntityType.VERSION,
+            entity_id=active.hierarchy_version_id,
+            action=ChangeAction.MERGE,
+            changed_by=user.username,
+            field_name="merged_from_version_id",
+            new_value=version_id,
+        )
+        db.commit()
+        db.refresh(active)
+        return active

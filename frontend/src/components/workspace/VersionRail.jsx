@@ -3,6 +3,7 @@ import {
   Copy,
   GitBranch,
   GitCompare,
+  GitMerge,
   Loader2,
   Play,
   Plus,
@@ -33,6 +34,7 @@ export default function VersionRail({
   onValidate,
   onSubmit,
   onActivate,
+  onMergeDraft,
   validationResult,
   loading,
 }) {
@@ -103,6 +105,12 @@ export default function VersionRail({
               {v.version_name && (
                 <p className="mt-0.5 truncate text-[11px] text-[var(--color-text-muted)]">{v.version_name}</p>
               )}
+              {v.scope_root_hierarchy_node_id && (
+                <p className="mt-0.5 flex items-center gap-1 truncate text-[10px] text-[var(--color-accent)]">
+                  <GitBranch size={10} />
+                  {v.merged_at ? 'Merged · ' : ''}{v.scope_root_node_name || 'Node draft'}
+                </p>
+              )}
             </button>
           );
         })}
@@ -157,10 +165,22 @@ export default function VersionRail({
             </Button>
           )}
 
-          {version.status === 'APPROVED' && (
+          {version.status === 'APPROVED' && !version.scope_root_hierarchy_node_id && (
             <Button size="sm" className="w-full" onClick={() => setShowActivate(true)} disabled={loading}>
               <Play size={13} /> Activate
             </Button>
+          )}
+
+          {version.status === 'APPROVED' && version.scope_root_hierarchy_node_id && !version.merged_at && (
+            <Button size="sm" className="w-full" onClick={onMergeDraft} disabled={loading}>
+              <GitMerge size={13} /> Merge into active
+            </Button>
+          )}
+
+          {version.status === 'APPROVED' && version.scope_root_hierarchy_node_id && version.merged_at && (
+            <div className="flex items-center justify-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-[11px] font-medium text-emerald-700">
+              <CheckCircle2 size={13} /> Merged
+            </div>
           )}
 
           {version.status === 'ACTIVE' && (

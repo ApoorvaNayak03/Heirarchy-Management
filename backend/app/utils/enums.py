@@ -73,6 +73,7 @@ class ChangeAction(str, enum.Enum):
     ACTIVATE = "ACTIVATE"
     RETIRE = "RETIRE"
     CANCEL = "CANCEL"
+    MERGE = "MERGE"
 
 
 EDITABLE_VERSION_STATUSES = {VersionStatus.DRAFT, VersionStatus.REJECTED}

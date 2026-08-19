@@ -71,6 +71,8 @@ export const versionService = {
   cloneNode: (id, nodeId, data) => api.post(`/versions/${id}/nodes/${nodeId}/clone`, data),
   conflicts: (id) => api.get(`/versions/${id}/conflicts`),
   resolveConflicts: (id, resolutions) => api.post(`/versions/${id}/resolve-conflicts`, { resolutions }),
+  branchFromNode: (id, nodeId, data) => api.post(`/versions/${id}/nodes/${nodeId}/branch`, data),
+  mergeDraft: (id, resolutions = []) => api.post(`/versions/${id}/merge`, { resolutions }),
 };
 
 export const approvalService = {

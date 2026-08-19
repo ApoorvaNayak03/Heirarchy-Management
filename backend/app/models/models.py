@@ -142,6 +142,8 @@ class HierarchyVersion(Base):
     valid_to: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(30), default=VersionStatus.DRAFT.value, index=True)
     based_on_version_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("hierarchy_versions.hierarchy_version_id"), nullable=True)
+    scope_root_hierarchy_node_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("hierarchy_nodes.hierarchy_node_id"), nullable=True)
+    merged_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_by: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

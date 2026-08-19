@@ -5,6 +5,7 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import HierarchyGraphView from '../components/HierarchyGraphView';
 import Modal from '../components/Modal';
 import DraggableTreeView from '../components/workspace/DraggableTreeView';
+import MergeDraftModal from '../components/workspace/MergeDraftModal';
 import NodeDetailModal from '../components/workspace/NodeDetailModal';
 import VersionRail from '../components/workspace/VersionRail';
 import ViewToggle from '../components/workspace/ViewToggle';
@@ -46,6 +47,7 @@ export default function HierarchyWorkspacePage() {
   const [cloneName, setCloneName] = useState('');
 
   const [validationResult, setValidationResult] = useState(null);
+  const [mergeModalOpen, setMergeModalOpen] = useState(false);
 
   const readOnly = version && !EDITABLE.includes(version.status);
   const displayTree = useMemo(() => filterTree(tree, search), [tree, search]);
@@ -281,6 +283,22 @@ export default function HierarchyWorkspacePage() {
     }
   };
 
+  const handleBranchFromNode = async (node) => {
+    setBusy(true);
+    try {
+      const res = await versionService.branchFromNode(versionId, node.version_node_id, {
+        version_name: `Draft of ${node.display_name}`,
+      });
+      setVersionId(res.data.hierarchy_version_id);
+      await refreshAll(res.data.hierarchy_version_id);
+      showToast('Draft created from node', 'success');
+    } catch (err) {
+      showToast(err.response?.data?.detail?.message || err.response?.data?.detail || 'Failed to create draft', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleValidate = async () => {
     setBusy(true);
     try {
@@ -429,6 +447,7 @@ export default function HierarchyWorkspacePage() {
           onValidate={handleValidate}
           onSubmit={handleSubmit}
           onActivate={handleActivate}
+          onMergeDraft={() => setMergeModalOpen(true)}
           validationResult={validationResult}
           loading={busy}
         />
@@ -445,6 +464,7 @@ export default function HierarchyWorkspacePage() {
               onDelete={setDeleteNode}
               onClone={(node) => { setCloneNode(node); setCloneName(`${node.display_name} Copy`); }}
               onInlineEdit={handleInlineEdit}
+              onBranch={handleBranchFromNode}
               onMove={handleMove}
               canMoveNode={canMoveNode}
             />
@@ -494,6 +514,14 @@ export default function HierarchyWorkspacePage() {
         onCancel={() => setDeleteNode(null)}
         confirmLabel="Remove"
         danger
+      />
+
+      <MergeDraftModal
+        open={mergeModalOpen}
+        version={version}
+        onClose={() => setMergeModalOpen(false)}
+        onMerged={() => refreshAll(versionId)}
+        showToast={showToast}
       />
     </div>
   );

@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Copy,
   Edit,
+  GitBranch,
   GripVertical,
   Plus,
   Trash2,
@@ -63,6 +64,7 @@ function TreeNodeRow({
   onDelete,
   onClone,
   onInlineEdit,
+  onBranch,
   readOnly,
   isLast,
   dragActive,
@@ -205,6 +207,11 @@ function TreeNodeRow({
             <button type="button" title="Clone" className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]" onClick={() => onClone(node)}>
               <Copy size={13} />
             </button>
+            {onBranch && (
+              <button type="button" title="Create draft from this node" className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]" onClick={() => onBranch(node)}>
+                <GitBranch size={13} />
+              </button>
+            )}
             <button type="button" title="Delete" className="rounded p-1 text-red-500 hover:bg-red-50" onClick={() => onDelete(node)}>
               <Trash2 size={13} />
             </button>
@@ -224,6 +231,7 @@ function TreeNodeRow({
           onDelete={onDelete}
           onClone={onClone}
           onInlineEdit={onInlineEdit}
+          onBranch={onBranch}
           readOnly={readOnly}
           isLast={idx === node.children.length - 1}
           dragActive={dragActive}
@@ -285,6 +293,7 @@ export default function DraggableTreeView({
   onDelete,
   onClone,
   onInlineEdit,
+  onBranch,
   onMove,
   canMoveNode,
   readOnly,
@@ -389,6 +398,7 @@ export default function DraggableTreeView({
             onDelete={onDelete}
             onClone={onClone}
             onInlineEdit={onInlineEdit}
+            onBranch={onBranch}
             readOnly={readOnly}
             isLast={idx === tree.length - 1}
             dragActive={!!activeId}

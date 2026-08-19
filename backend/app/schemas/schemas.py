@@ -224,6 +224,9 @@ class VersionResponse(BaseModel):
     valid_to: date | None
     status: str
     based_on_version_id: str | None
+    scope_root_hierarchy_node_id: str | None = None
+    scope_root_node_name: str | None = None
+    merged_at: datetime | None = None
     created_by: str
     created_at: datetime
     cancelled_at: datetime | None
@@ -351,11 +354,15 @@ class ConflictsResponse(BaseModel):
 class ConflictResolution(BaseModel):
     hierarchy_node_id: str
     field: str
-    choice: str
+    choice: str  # "active" (keep active's value) | "draft" (apply proposed/draft's value)
 
 
 class ResolveConflictsRequest(BaseModel):
     resolutions: list[ConflictResolution]
+
+
+class MergeDraftRequest(BaseModel):
+    resolutions: list[ConflictResolution] = []
 
 
 class ActivateVersionRequest(BaseModel):
