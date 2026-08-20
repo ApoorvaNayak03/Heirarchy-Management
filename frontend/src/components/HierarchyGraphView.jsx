@@ -51,6 +51,7 @@ function GraphCanvas({
   onClone,
   onMove,
   canMoveNode,
+  propertyDefsByType,
 }) {
   const { fitView } = useReactFlow();
   const draggingRef = useRef(null);
@@ -81,11 +82,11 @@ function GraphCanvas({
   );
 
   const callbacksRef = useRef({});
-  callbacksRef.current = { selectedId, readOnly, onSelect, onAdd, onEdit, onDelete, onClone, onFocus, focusedId };
+  callbacksRef.current = { selectedId, readOnly, onSelect, onAdd, onEdit, onDelete, onClone, onFocus, focusedId, propertyDefsByType };
 
   const buildLayout = useCallback(() => {
-    const { selectedId: sel, readOnly: ro, onSelect: os, onAdd: oa, onEdit: oe, onDelete: od, onClone: oc, onFocus: of_, focusedId: fid } = callbacksRef.current;
-    return treeToFlowElements(displayTree, { selectedId: sel, readOnly: ro, onSelect: os, onAdd: oa, onEdit: oe, onDelete: od, onClone: oc, onFocus: of_, focusedId: fid });
+    const { selectedId: sel, readOnly: ro, onSelect: os, onAdd: oa, onEdit: oe, onDelete: od, onClone: oc, onFocus: of_, focusedId: fid, propertyDefsByType: pdt } = callbacksRef.current;
+    return treeToFlowElements(displayTree, { selectedId: sel, readOnly: ro, onSelect: os, onAdd: oa, onEdit: oe, onDelete: od, onClone: oc, onFocus: of_, focusedId: fid, propertyDefsByType: pdt });
   }, [displayTree]);
 
   // Rebuild positions/edges only when the underlying tree structure actually changes.

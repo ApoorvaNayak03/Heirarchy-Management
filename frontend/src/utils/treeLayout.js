@@ -1,5 +1,5 @@
 const NODE_WIDTH = 200;
-const NODE_HEIGHT = 72;
+const NODE_HEIGHT = 96;
 const H_GAP = 48;
 const V_GAP = 100;
 
@@ -35,6 +35,7 @@ function walkTree(nodeList, depth, startX, nodes, edges, options) {
         onDelete: options.onDelete,
         onClone: options.onClone,
         onFocus: options.onFocus,
+        propertyDefsByType: options.propertyDefsByType,
       },
     });
 

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models import NodePropertyDefinition, NodeType, StructuralRule, User
+from app.services.rollup_sync_service import RollupSyncService
 from app.schemas.schemas import (
     MessageResponse,
     PropertyDefinitionCreate,
@@ -38,6 +39,9 @@ def list_property_definitions(
 def create_property_definition(payload: PropertyDefinitionCreate, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     item = NodePropertyDefinition(**payload.model_dump())
     db.add(item)
+    db.flush()
+    if item.data_type == "NUMBER" and item.hierarchy_type_id and item.node_type_id:
+        RollupSyncService.sync_for_hierarchy_type(db, item.hierarchy_type_id)
     db.commit()
     db.refresh(item)
     return item

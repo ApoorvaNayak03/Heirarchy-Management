@@ -1,5 +1,5 @@
 import { ArrowLeft, GitCompare, Plus, Search } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import ConfirmDialog from '../components/ConfirmDialog';
 import HierarchyGraphView from '../components/HierarchyGraphView';
@@ -14,8 +14,9 @@ import FormField from '../components/ui/FormField';
 import Input from '../components/ui/Input';
 import StatusBadge from '../components/StatusBadge';
 import { useToast } from '../hooks/useToast';
-import { hierarchyService, propertyService, versionService } from '../services';
-import { countNodes, filterTree } from '../utils/treeUtils';
+import { hierarchyService, hierarchyTypeService, propertyService, versionService } from '../services';
+import { countNodes, filterTree, findNode } from '../utils/treeUtils';
+import { buildNodeFormState } from '../utils/nodeProperties';
 import { buildMoveValidator, checkMove, resolveMoveTarget } from '../utils/moveValidation';
 
 const EDITABLE = ['DRAFT', 'REJECTED'];
@@ -48,6 +49,7 @@ export default function HierarchyWorkspacePage() {
   const [form, setForm] = useState({ node_type_id: '', display_name: '', properties: {} });
   const [allowedTypes, setAllowedTypes] = useState([]);
   const [propertyDefs, setPropertyDefs] = useState([]);
+  const [propertyDefsByType, setPropertyDefsByType] = useState({});
   const [saving, setSaving] = useState(false);
 
   const [deleteNode, setDeleteNode] = useState(null);
@@ -56,6 +58,7 @@ export default function HierarchyWorkspacePage() {
 
   const [validationResult, setValidationResult] = useState(null);
   const [mergeModalOpen, setMergeModalOpen] = useState(false);
+  const customFieldsRef = useRef(null);
 
   const readOnly = version && !EDITABLE.includes(version.status);
   const displayTree = useMemo(() => filterTree(tree, search), [tree, search]);
@@ -95,6 +98,32 @@ export default function HierarchyWorkspacePage() {
       .finally(() => setLoading(false));
   }, [hierarchyId, loadDetail, loadVersion, showToast]);
 
+  const refreshPropertyDefsByType = useCallback(async () => {
+    const hierarchyTypeId = detail?.hierarchy?.hierarchy_type_id;
+    if (!hierarchyTypeId) return;
+    const res = await propertyService.list({ hierarchy_type_id: hierarchyTypeId });
+    const byType = {};
+    res.data.forEach((d) => {
+      if (!d.node_type_id) return;
+      (byType[d.node_type_id] ||= []).push(d);
+    });
+    setPropertyDefsByType(byType);
+  }, [detail?.hierarchy?.hierarchy_type_id]);
+
+  useEffect(() => {
+    const hierarchyTypeId = detail?.hierarchy?.hierarchy_type_id;
+    if (!hierarchyTypeId) return;
+    hierarchyTypeService
+      .syncRollups(hierarchyTypeId)
+      .then((res) => {
+        refreshPropertyDefsByType();
+        if (res.data?.created_count > 0 && versionId) {
+          loadVersion(versionId);
+        }
+      })
+      .catch(() => refreshPropertyDefsByType());
+  }, [detail?.hierarchy?.hierarchy_type_id]);
+
   const refreshAll = async (vid = versionId) => {
     const d = await loadDetail();
     if (vid) await loadVersion(vid);
@@ -102,12 +131,26 @@ export default function HierarchyWorkspacePage() {
   };
 
   const loadPropertyDefs = async (nodeTypeId) => {
-    if (!nodeTypeId) {
+    const hierarchyTypeId = detail?.hierarchy?.hierarchy_type_id;
+    if (!nodeTypeId || !hierarchyTypeId) {
       setPropertyDefs([]);
-      return;
+      return [];
     }
-    const defs = await propertyService.list({ node_type_id: nodeTypeId });
-    setPropertyDefs(defs.data);
+    const res = await propertyService.list({ hierarchy_type_id: hierarchyTypeId });
+    const defs = res.data.filter((d) => !d.node_type_id || d.node_type_id === nodeTypeId);
+    setPropertyDefs(defs);
+    return defs;
+  };
+
+  const openNodeModal = async (node, { mode = 'edit' } = {}) => {
+    const freshNode = findNode(tree, node.version_node_id) || node;
+    setSelected(freshNode);
+    setParentForAdd(null);
+    setModalMode(mode);
+    const defs = await loadPropertyDefs(freshNode.node_type_id);
+    setForm(buildNodeFormState(freshNode, defs));
+    setModalOpen(true);
+    return freshNode;
   };
 
   const openAdd = async (parent) => {
@@ -124,25 +167,12 @@ export default function HierarchyWorkspacePage() {
   };
 
   const openEdit = async (node) => {
-    if (readOnly) return;
-    setSelected(node);
-    setParentForAdd(null);
-    setModalMode('edit');
-    setForm({ display_name: node.display_name, properties: node.properties || {} });
-    await loadPropertyDefs(node.node_type_id);
-    setModalOpen(true);
+    await openNodeModal(node, { mode: 'edit' });
   };
 
   const handleSelect = (node) => {
-    if (readOnly) {
-      setSelected(node);
-      setModalMode('edit');
-      setForm({ display_name: node.display_name, properties: node.properties || {} });
-      loadPropertyDefs(node.node_type_id);
-      setModalOpen(true);
-    } else {
-      openEdit(node);
-    }
+    const freshNode = findNode(tree, node.version_node_id) || node;
+    setSelected(freshNode);
   };
 
   useEffect(() => {
@@ -151,11 +181,11 @@ export default function HierarchyWorkspacePage() {
     }
   }, [form.node_type_id, modalMode]);
 
-  const promoteCustomFields = async (nodeTypeId) => {
+  const promoteCustomFields = async (nodeTypeId, properties = form.properties) => {
     const hierarchyTypeId = detail?.hierarchy?.hierarchy_type_id;
     if (!nodeTypeId || !hierarchyTypeId) return;
     const definedCodes = propertyDefs.map((d) => d.property_code);
-    const customKeys = Object.keys(form.properties || {}).filter((k) => !definedCodes.includes(k));
+    const customKeys = Object.keys(properties || {}).filter((k) => !definedCodes.includes(k));
     if (!customKeys.length) return;
     await Promise.all(
       customKeys.map((code) =>
@@ -164,8 +194,8 @@ export default function HierarchyWorkspacePage() {
             hierarchy_type_id: hierarchyTypeId,
             node_type_id: nodeTypeId,
             property_code: code,
-            display_label: code,
-            data_type: typeof form.properties[code] === 'number' ? 'NUMBER' : 'TEXT',
+            display_label: code.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+            data_type: typeof properties[code] === 'number' ? 'NUMBER' : 'STRING',
             required: false,
             display_order: propertyDefs.length,
           })
@@ -179,20 +209,31 @@ export default function HierarchyWorkspacePage() {
       showToast('Display name is required', 'error');
       return;
     }
+    const properties = customFieldsRef.current?.flushPending?.() ?? form.properties;
     setSaving(true);
     try {
       const nodeTypeId = modalMode === 'add' ? form.node_type_id : selected?.node_type_id;
       if (modalMode === 'add') {
         await versionService.addNode(versionId, {
           ...form,
+          properties,
           parent_version_node_id: parentForAdd?.version_node_id || null,
         });
         showToast('Node added', 'success');
       } else if (selected) {
-        await versionService.updateNode(versionId, selected.version_node_id, form);
+        await versionService.updateNode(versionId, selected.version_node_id, {
+          display_name: form.display_name,
+          properties,
+        });
         showToast('Node updated', 'success');
       }
-      await promoteCustomFields(nodeTypeId);
+      await promoteCustomFields(nodeTypeId, properties);
+      const hierarchyTypeId = detail?.hierarchy?.hierarchy_type_id;
+      if (hierarchyTypeId) {
+        await hierarchyTypeService.syncRollups(hierarchyTypeId).catch(() => {});
+      }
+      await loadPropertyDefs(nodeTypeId);
+      await refreshPropertyDefsByType();
       await loadVersion(versionId);
       setModalOpen(false);
     } catch (err) {
@@ -219,6 +260,9 @@ export default function HierarchyWorkspacePage() {
     try {
       await versionService.deleteNode(versionId, deleteNode.version_node_id);
       showToast('Node removed', 'success');
+      if (selected?.version_node_id === deleteNode.version_node_id) {
+        setSelected(null);
+      }
       setDeleteNode(null);
       setModalOpen(false);
       loadVersion(versionId);
@@ -279,6 +323,7 @@ export default function HierarchyWorkspacePage() {
   const handleSelectVersion = async (vid) => {
     setVersionId(vid);
     setModalOpen(false);
+    setSelected(null);
     setLoading(true);
     await loadVersion(vid);
     setLoading(false);
@@ -418,18 +463,20 @@ export default function HierarchyWorkspacePage() {
               </Button>
             </Link>
           )}
-          <div className="relative hidden sm:block">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
-            <input
-              type="search"
-              placeholder="Search nodes…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-8 w-48 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] pl-8 pr-3 text-xs outline-none focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)]"
-            />
-          </div>
+          {view === 'graph' && (
+            <div className="relative hidden sm:block">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
+              <input
+                type="search"
+                placeholder="Search nodes…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="h-8 w-48 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] pl-8 pr-3 text-xs outline-none focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)]"
+              />
+            </div>
+          )}
           <ViewToggle view={view} onChange={setView} nodeCount={nodeCount} />
-          {!readOnly && (
+          {view === 'graph' && !readOnly && (
             <Button size="sm" onClick={() => openAdd(null)}>
               <Plus size={14} /> Add root
             </Button>
@@ -440,7 +487,7 @@ export default function HierarchyWorkspacePage() {
       {/* Validation banner */}
       {validationResult && !validationResult.valid && (
         <div className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-800">
-          {validationResult.errors?.length} validation error(s) — click a node to fix, then re-validate
+          {validationResult.errors?.length} validation error(s) — select a node to inspect, fix fields, then re-validate
         </div>
       )}
 
@@ -485,30 +532,38 @@ export default function HierarchyWorkspacePage() {
           loading={busy}
         />
 
-        <main className="relative flex-1 overflow-hidden bg-[var(--color-bg)] p-4">
-          {view === 'tree' ? (
-            <DraggableTreeView
-              tree={displayTree}
-              selectedId={selected?.version_node_id}
-              readOnly={readOnly}
-              onSelect={handleSelect}
-              onAdd={openAdd}
-              onEdit={openEdit}
-              onDelete={setDeleteNode}
-              onClone={(node) => { setCloneNode(node); setCloneName(`${node.display_name} Copy`); }}
-              onInlineEdit={handleInlineEdit}
-              onBranch={handleBranchFromNode}
-              onMove={handleMove}
-              canMoveNode={canMoveNode}
-            />
-          ) : (
-            <HierarchyGraphView
-              tree={displayTree}
-              selectedId={selected?.version_node_id}
-              readOnly={readOnly}
-              {...graphHandlers}
-            />
-          )}
+        <main className="relative flex flex-1 flex-col overflow-hidden bg-slate-100/60 p-4">
+          <div className="flex-1 overflow-hidden">
+            {view === 'tree' ? (
+              <DraggableTreeView
+                tree={displayTree}
+                fullTree={tree}
+                selectedId={selected?.version_node_id}
+                search={search}
+                onSearchChange={setSearch}
+                onSwitchView={() => setView('graph')}
+                readOnly={readOnly}
+                onSelect={handleSelect}
+                onAdd={openAdd}
+                onEdit={openEdit}
+                onDelete={setDeleteNode}
+                onClone={(node) => { setCloneNode(node); setCloneName(`${node.display_name} Copy`); }}
+                onInlineEdit={handleInlineEdit}
+                onBranch={handleBranchFromNode}
+                onMove={handleMove}
+                canMoveNode={canMoveNode}
+                propertyDefsByType={propertyDefsByType}
+              />
+            ) : (
+              <HierarchyGraphView
+                tree={displayTree}
+                selectedId={selected?.version_node_id}
+                readOnly={readOnly}
+                propertyDefsByType={propertyDefsByType}
+                {...graphHandlers}
+              />
+            )}
+          </div>
         </main>
       </div>
 
@@ -521,7 +576,19 @@ export default function HierarchyWorkspacePage() {
         form={form}
         allowedTypes={allowedTypes}
         propertyDefs={propertyDefs}
-        onChange={setForm}
+        customFieldsRef={customFieldsRef}
+        onChange={(patch) => setForm((prev) => {
+          if (Object.prototype.hasOwnProperty.call(patch, 'propertyCode')) {
+            return {
+              ...prev,
+              properties: {
+                ...(prev.properties || {}),
+                [patch.propertyCode]: patch.propertyValue,
+              },
+            };
+          }
+          return { ...prev, ...patch };
+        })}
         onSave={saveNode}
         onClose={() => setModalOpen(false)}
         saving={saving}

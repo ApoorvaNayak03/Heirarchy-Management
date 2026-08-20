@@ -1,5 +1,6 @@
 import { Copy, Edit, GripVertical, Plus, Scan, Trash2 } from 'lucide-react';
 import { Handle, Position } from 'reactflow';
+import { NodeTreeMeta } from './NodePropertyDisplay';
 
 export default function HierarchyGraphNode({ data }) {
   const {
@@ -19,12 +20,13 @@ export default function HierarchyGraphNode({ data }) {
     onClone,
     onFocus,
     isFocused,
+    propertyDefsByType,
   } = data;
   const selected = selectedId === node.version_node_id;
 
   return (
     <div
-      className={`group min-w-[180px] max-w-[220px] rounded-lg border-2 bg-white px-3 py-2.5 shadow-sm transition-all duration-150 ${
+      className={`group min-w-[180px] max-w-[240px] rounded-lg border-2 bg-white px-3 py-2.5 shadow-sm transition-all duration-150 ${
         isDraggingNode
           ? 'cursor-grabbing border-amber-500 bg-white shadow-2xl ring-4 ring-amber-300/60 scale-105'
           : isDropTarget
@@ -57,6 +59,9 @@ export default function HierarchyGraphNode({ data }) {
         {isDraggingNode && <span className="text-[10px] font-semibold text-amber-600">Moving…</span>}
         {isDropTarget && <span className="text-[10px] font-semibold text-emerald-600">Drop here</span>}
         {isInvalidDropTarget && <span className="text-[10px] font-semibold text-red-600">Not allowed</span>}
+      </div>
+      <div className="mt-1.5 flex flex-wrap gap-1">
+        <NodeTreeMeta node={node} propertyDefs={propertyDefsByType?.[node.node_type_id]} maxVisible={3} />
       </div>
       {!isDraft && (
         <div className="mt-2 flex justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">

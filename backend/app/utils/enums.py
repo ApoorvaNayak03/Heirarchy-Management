@@ -30,6 +30,15 @@ class PropertyDataType(str, enum.Enum):
     BOOLEAN = "BOOLEAN"
     ENUM = "ENUM"
     REFERENCE = "REFERENCE"
+    ROLLUP = "ROLLUP"
+
+
+class AggregationFn(str, enum.Enum):
+    SUM = "SUM"
+    COUNT = "COUNT"
+    AVG = "AVG"
+    MIN = "MIN"
+    MAX = "MAX"
 
 
 class ApprovalRequestStatus(str, enum.Enum):

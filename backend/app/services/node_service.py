@@ -15,6 +15,7 @@ from app.models import (
     HierarchyNode,
     HierarchyVersion,
     HierarchyVersionNode,
+    NodePropertyDefinition,
     NodeType,
     User,
 )
@@ -27,12 +28,27 @@ from app.schemas.schemas import (
     TreeNodeResponse,
 )
 from app.services.audit_service import AuditService
+from app.services.rollup_service import RollupService
 from app.utils.cycle import get_active_version_nodes, get_child_edges, would_create_cycle
-from app.utils.enums import ChangeAction, ChangeEntityType, LineageOperationType, NodeStatus
+from app.utils.enums import ChangeAction, ChangeEntityType, LineageOperationType, NodeStatus, PropertyDataType
 from app.validators.validation_service import PropertyValidator, ValidationService
 
 
 class NodeService:
+    @staticmethod
+    def _strip_rollup_properties(db: Session, hierarchy_type_id: str, node_type_id: str, properties: dict) -> dict:
+        rollup_codes = {
+            d.property_code
+            for d in db.query(NodePropertyDefinition).filter(
+                NodePropertyDefinition.hierarchy_type_id == hierarchy_type_id,
+                (NodePropertyDefinition.node_type_id == node_type_id) | (NodePropertyDefinition.node_type_id.is_(None)),
+                NodePropertyDefinition.data_type == PropertyDataType.ROLLUP.value,
+            )
+        }
+        if not rollup_codes:
+            return properties
+        return {k: v for k, v in properties.items() if k not in rollup_codes}
+
     @staticmethod
     def build_tree(db: Session, version_id: str) -> list[TreeNodeResponse]:
         version = db.query(HierarchyVersion).filter(HierarchyVersion.hierarchy_version_id == version_id).first()
@@ -65,8 +81,31 @@ class NodeService:
 
         node_lookup = {n.version_node_id: n for n in nodes}
 
+        rollup_defs_by_type: dict[str, list[NodePropertyDefinition]] = defaultdict(list)
+        if nodes:
+            defs = (
+                db.query(NodePropertyDefinition)
+                .filter(
+                    NodePropertyDefinition.hierarchy_type_id == version.hierarchy.hierarchy_type_id,
+                    NodePropertyDefinition.data_type == PropertyDataType.ROLLUP.value,
+                )
+                .all()
+            )
+            for d in defs:
+                if d.node_type_id:
+                    rollup_defs_by_type[d.node_type_id].append(d)
+
         def build_node(vn: HierarchyVersionNode) -> TreeNodeResponse:
             node_type = vn.hierarchy_node.node_type
+            children = [
+                build_node(node_lookup[cid])
+                for cid in children_map.get(vn.version_node_id, [])
+                if cid in node_lookup
+            ]
+            properties = dict(vn.properties or {})
+            rollup_defs = rollup_defs_by_type.get(node_type.node_type_id)
+            if rollup_defs:
+                properties.update(RollupService.compute(rollup_defs, [c.properties or {} for c in children]))
             return TreeNodeResponse(
                 version_node_id=vn.version_node_id,
                 hierarchy_node_id=vn.hierarchy_node_id,
@@ -76,13 +115,9 @@ class NodeService:
                 node_type_name=node_type.name,
                 sibling_order=vn.sibling_order,
                 node_status=vn.node_status,
-                properties=vn.properties or {},
+                properties=properties,
                 parent_version_node_id=parent_map.get(vn.version_node_id),
-                children=[
-                    build_node(node_lookup[cid])
-                    for cid in children_map.get(vn.version_node_id, [])
-                    if cid in node_lookup
-                ],
+                children=children,
             )
 
         roots = [node_lookup[cid] for cid in children_map.get(None, []) if cid in node_lookup]
@@ -123,7 +158,7 @@ class NodeService:
         db.add(logical)
         db.flush()
 
-        properties = payload.properties or {}
+        properties = NodeService._strip_rollup_properties(db, hierarchy_type.hierarchy_type_id, payload.node_type_id, payload.properties or {})
         prop_errors = PropertyValidator.validate_properties(db, hierarchy_type.hierarchy_type_id, payload.node_type_id, properties)
         if prop_errors:
             raise HTTPException(status_code=400, detail={"errors": [e.model_dump() for e in prop_errors]})
@@ -170,6 +205,9 @@ class NodeService:
             raise HTTPException(status_code=404, detail="Node not found")
 
         if payload.properties is not None:
+            payload.properties = NodeService._strip_rollup_properties(
+                db, version.hierarchy.hierarchy_type_id, vn.hierarchy_node.node_type_id, payload.properties
+            )
             errors = PropertyValidator.validate_properties(
                 db,
                 version.hierarchy.hierarchy_type_id,

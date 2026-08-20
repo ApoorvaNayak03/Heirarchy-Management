@@ -24,5 +24,8 @@ export default function PropertyFieldRenderer({ definition, value, onChange }) {
   if (dtype === 'NUMBER') {
     return <input type="number" className={common} value={value ?? ''} onChange={(e) => onChange(Number(e.target.value))} />;
   }
-  return <input type="text" className={common} value={value || ''} onChange={(e) => onChange(e.target.value)} />;
+  if (dtype === 'ROLLUP') {
+    return <input type="number" disabled className={`${common} cursor-not-allowed bg-[var(--color-bg)] text-[var(--color-text-muted)]`} value={value ?? 0} />;
+  }
+  return <input type="text" className={common} value={value != null && value !== '' ? String(value) : ''} onChange={(e) => onChange(e.target.value)} />;
 }

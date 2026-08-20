@@ -5,6 +5,7 @@ import Button from '../ui/Button';
 import FormField from '../ui/FormField';
 import Input from '../ui/Input';
 import Select from '../ui/Select';
+import { formatPropertyValue, getCustomPropertyEntries } from '../../utils/nodeProperties';
 
 export default function NodeDetailModal({
   open,
@@ -19,6 +20,7 @@ export default function NodeDetailModal({
   onSave,
   onClose,
   saving,
+  customFieldsRef,
 }) {
   const isAdd = mode === 'add';
   const title = isAdd
@@ -28,6 +30,8 @@ export default function NodeDetailModal({
     : readOnly
       ? selectedNode?.display_name
       : `Edit "${selectedNode?.display_name}"`;
+
+  const customEntries = getCustomPropertyEntries(form.properties, propertyDefs);
 
   return (
     <Modal open={open} title={title} onClose={onClose} wide>
@@ -44,9 +48,22 @@ export default function NodeDetailModal({
           {propertyDefs.map((def) => (
             <div key={def.property_definition_id} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
               <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{def.display_label}</div>
-              <div className="mt-0.5 text-sm">{String(form.properties?.[def.property_code] ?? '—')}</div>
+              <div className="mt-0.5 text-sm">{formatPropertyValue(form.properties?.[def.property_code])}</div>
             </div>
           ))}
+          {customEntries.length > 0 && (
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
+              <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Additional fields</div>
+              <div className="space-y-2">
+                {customEntries.map(([key, value]) => (
+                  <div key={key} className="flex items-center justify-between gap-3 text-sm">
+                    <span className="font-mono text-[12px] text-[var(--color-text-muted)]">{key}</span>
+                    <span className="font-medium">{formatPropertyValue(value)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <div className="max-h-[60vh] space-y-4 overflow-y-auto">
@@ -54,7 +71,7 @@ export default function NodeDetailModal({
             <FormField label="Node type" required hint={parentNode ? 'Allowed child types for this parent' : 'Root-level types only'}>
               <Select
                 value={form.node_type_id}
-                onChange={(e) => onChange({ ...form, node_type_id: e.target.value, properties: {} })}
+                onChange={(e) => onChange({ node_type_id: e.target.value, properties: {} })}
               >
                 {allowedTypes.map((t) => (
                   <option key={t.node_type_id} value={t.node_type_id}>{t.name}</option>
@@ -70,7 +87,7 @@ export default function NodeDetailModal({
           <FormField label="Display name" required>
             <Input
               value={form.display_name}
-              onChange={(e) => onChange({ ...form, display_name: e.target.value })}
+              onChange={(e) => onChange({ display_name: e.target.value })}
               placeholder="e.g. North America"
               autoFocus
             />
@@ -80,17 +97,16 @@ export default function NodeDetailModal({
               <PropertyFieldRenderer
                 definition={def}
                 value={form.properties?.[def.property_code]}
-                onChange={(val) => onChange({
-                  ...form,
-                  properties: { ...form.properties, [def.property_code]: val },
-                })}
+                onChange={(val) => onChange({ propertyCode: def.property_code, propertyValue: val })}
               />
             </FormField>
           ))}
           <CustomPropertiesEditor
+            key={selectedNode?.version_node_id || 'add'}
+            ref={customFieldsRef}
             properties={form.properties}
             definedCodes={propertyDefs.map((d) => d.property_code)}
-            onChange={(properties) => onChange({ ...form, properties })}
+            onChange={(properties) => onChange({ properties })}
           />
         </div>
       )}

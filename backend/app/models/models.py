@@ -94,6 +94,8 @@ class NodePropertyDefinition(Base):
     default_value: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     validation_rule: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     display_order: Mapped[int] = mapped_column(Integer, default=0)
+    rollup_source_property_code: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    rollup_aggregation: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     hierarchy_type = relationship("HierarchyType", back_populates="property_definitions")
     node_type = relationship("NodeType", back_populates="property_definitions")

@@ -16,6 +16,7 @@ export const hierarchyTypeService = {
   create: (data) => api.post('/hierarchy-types', data),
   update: (id, data) => api.put(`/hierarchy-types/${id}`, data),
   delete: (id) => api.delete(`/hierarchy-types/${id}`),
+  syncRollups: (id) => api.post(`/hierarchy-types/${id}/sync-rollups`),
 };
 
 export const hierarchyService = {

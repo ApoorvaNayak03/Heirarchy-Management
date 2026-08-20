@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user, serialize_value
 from app.models import Hierarchy, HierarchyType, User
-from app.schemas.schemas import HierarchyCreate, HierarchyResponse, HierarchyTypeCreate, HierarchyTypeResponse, HierarchyTypeUpdate, HierarchyUpdate, MessageResponse
+from app.schemas.schemas import HierarchyCreate, HierarchyResponse, HierarchyTypeCreate, HierarchyTypeResponse, HierarchyTypeUpdate, HierarchyUpdate, MessageResponse, SyncRollupsResponse
+from app.services.rollup_sync_service import RollupSyncService
 from app.services.audit_service import AuditService
 from app.utils.enums import ChangeAction, ChangeEntityType
 
@@ -70,6 +71,14 @@ def delete_hierarchy_type(type_id: str, db: Session = Depends(get_db), _: User =
     db.delete(item)
     db.commit()
     return MessageResponse(message="Hierarchy type deleted")
+
+
+@router.post("/api/hierarchy-types/{type_id}/sync-rollups", response_model=SyncRollupsResponse)
+def sync_hierarchy_type_rollups(type_id: str, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    item = db.query(HierarchyType).filter(HierarchyType.hierarchy_type_id == type_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Hierarchy type not found")
+    return RollupSyncService.sync_for_hierarchy_type(db, type_id)
 
 
 hierarchies_router = APIRouter(tags=["Hierarchies"])

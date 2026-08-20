@@ -17,6 +17,11 @@ class MessageResponse(BaseModel):
     message: str
 
 
+class SyncRollupsResponse(BaseModel):
+    created_count: int
+    created: list[dict[str, Any]]
+
+
 class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=100)
     password: str = Field(min_length=6)
@@ -146,6 +151,8 @@ class PropertyDefinitionCreate(BaseModel):
     default_value: Any | None = None
     validation_rule: str | None = None
     display_order: int = 0
+    rollup_source_property_code: str | None = None
+    rollup_aggregation: str | None = None
 
 
 class PropertyDefinitionUpdate(BaseModel):
@@ -156,6 +163,8 @@ class PropertyDefinitionUpdate(BaseModel):
     default_value: Any | None = None
     validation_rule: str | None = None
     display_order: int | None = None
+    rollup_source_property_code: str | None = None
+    rollup_aggregation: str | None = None
 
 
 class PropertyDefinitionResponse(BaseModel):
@@ -172,6 +181,8 @@ class PropertyDefinitionResponse(BaseModel):
     default_value: Any | None
     validation_rule: str | None
     display_order: int
+    rollup_source_property_code: str | None = None
+    rollup_aggregation: str | None = None
 
 
 class StructuralRuleCreate(BaseModel):

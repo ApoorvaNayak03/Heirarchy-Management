@@ -44,6 +44,8 @@ class PropertyValidator:
             .all()
         )
         for definition in definitions:
+            if definition.data_type == PropertyDataType.ROLLUP.value:
+                continue
             value = props.get(definition.property_code)
             if definition.required and (value is None or value == ""):
                 errors.append(
