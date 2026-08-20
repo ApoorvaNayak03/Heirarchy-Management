@@ -20,6 +20,14 @@ import { buildMoveValidator, checkMove, resolveMoveTarget } from '../utils/moveV
 
 const EDITABLE = ['DRAFT', 'REJECTED'];
 
+function errMsg(err, fallback) {
+  const detail = err.response?.data?.detail;
+  if (typeof detail === 'string') return detail;
+  if (detail?.message && typeof detail.message === 'string') return detail.message;
+  if (Array.isArray(detail)) return detail.map((d) => d.msg).filter(Boolean).join('; ') || fallback;
+  return fallback;
+}
+
 export default function HierarchyWorkspacePage() {
   const { hierarchyId } = useParams();
   const { showToast } = useToast();
@@ -143,6 +151,29 @@ export default function HierarchyWorkspacePage() {
     }
   }, [form.node_type_id, modalMode]);
 
+  const promoteCustomFields = async (nodeTypeId) => {
+    const hierarchyTypeId = detail?.hierarchy?.hierarchy_type_id;
+    if (!nodeTypeId || !hierarchyTypeId) return;
+    const definedCodes = propertyDefs.map((d) => d.property_code);
+    const customKeys = Object.keys(form.properties || {}).filter((k) => !definedCodes.includes(k));
+    if (!customKeys.length) return;
+    await Promise.all(
+      customKeys.map((code) =>
+        propertyService
+          .create({
+            hierarchy_type_id: hierarchyTypeId,
+            node_type_id: nodeTypeId,
+            property_code: code,
+            display_label: code,
+            data_type: typeof form.properties[code] === 'number' ? 'NUMBER' : 'TEXT',
+            required: false,
+            display_order: propertyDefs.length,
+          })
+          .catch(() => {}),
+      ),
+    );
+  };
+
   const saveNode = async () => {
     if (!form.display_name.trim()) {
       showToast('Display name is required', 'error');
@@ -150,6 +181,7 @@ export default function HierarchyWorkspacePage() {
     }
     setSaving(true);
     try {
+      const nodeTypeId = modalMode === 'add' ? form.node_type_id : selected?.node_type_id;
       if (modalMode === 'add') {
         await versionService.addNode(versionId, {
           ...form,
@@ -160,10 +192,11 @@ export default function HierarchyWorkspacePage() {
         await versionService.updateNode(versionId, selected.version_node_id, form);
         showToast('Node updated', 'success');
       }
+      await promoteCustomFields(nodeTypeId);
       await loadVersion(versionId);
       setModalOpen(false);
     } catch (err) {
-      showToast(err.response?.data?.detail?.message || err.response?.data?.detail || 'Save failed', 'error');
+      showToast(errMsg(err, 'Save failed'), 'error');
     } finally {
       setSaving(false);
     }
