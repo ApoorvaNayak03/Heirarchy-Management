@@ -7,6 +7,75 @@ import Input from '../ui/Input';
 import Select from '../ui/Select';
 import { formatPropertyValue, getCustomPropertyEntries } from '../../utils/nodeProperties';
 
+/** JSON-array-of-objects properties rendered as a table instead of a raw JSON string. */
+const TABLE_PROPERTY_CONFIG = {
+  reps: {
+    label: 'Sales Reps',
+    columns: [
+      { key: 'full_name', label: 'Name' },
+      { key: 'job_title', label: 'Job Title' },
+      { key: 'department', label: 'Department' },
+      { key: 'commission_flag', label: 'Commission' },
+      { key: 'email', label: 'Email' },
+      { key: 'effective_date', label: 'Effective Date' },
+    ],
+  },
+  transactions: {
+    label: 'Transactions',
+    columns: [
+      { key: 'trx_book_date', label: 'Date' },
+      { key: 'product_id', label: 'Product' },
+      { key: 'trx_source', label: 'Source' },
+      { key: 'qty', label: 'Qty' },
+      { key: 'unit_price', label: 'Unit Price' },
+      { key: 'trx_value', label: 'Value' },
+      { key: 'trx_currency', label: 'Currency' },
+    ],
+  },
+};
+
+function parseTableRows(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function PropertyTable({ label, columns, rows }) {
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
+      <div className="mb-2 flex items-center justify-between">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{label}</div>
+        <div className="text-[10px] text-[var(--color-text-muted)]">{rows.length} record{rows.length === 1 ? '' : 's'}</div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-[12px]">
+          <thead>
+            <tr className="border-b border-[var(--color-border)] text-[var(--color-text-muted)]">
+              {columns.map((col) => (
+                <th key={col.key} className="whitespace-nowrap px-2 py-1 font-medium">{col.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i} className="border-b border-[var(--color-border)] last:border-0">
+                {columns.map((col) => (
+                  <td key={col.key} className="whitespace-nowrap px-2 py-1">{formatPropertyValue(row[col.key])}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function NodeDetailModal({
   open,
   mode,
@@ -32,6 +101,9 @@ export default function NodeDetailModal({
       : `Edit "${selectedNode?.display_name}"`;
 
   const customEntries = getCustomPropertyEntries(form.properties, propertyDefs);
+  const tableEntries = getCustomPropertyEntries(form.properties, propertyDefs, { includeTableOnly: true }).filter(
+    ([key]) => TABLE_PROPERTY_CONFIG[key] && parseTableRows(form.properties?.[key]),
+  );
 
   return (
     <Modal open={open} title={title} onClose={onClose} wide>
@@ -64,6 +136,14 @@ export default function NodeDetailModal({
               </div>
             </div>
           )}
+          {tableEntries.map(([key, value]) => (
+            <PropertyTable
+              key={key}
+              label={TABLE_PROPERTY_CONFIG[key].label}
+              columns={TABLE_PROPERTY_CONFIG[key].columns}
+              rows={parseTableRows(value)}
+            />
+          ))}
         </div>
       ) : (
         <div className="max-h-[60vh] space-y-4 overflow-y-auto">
